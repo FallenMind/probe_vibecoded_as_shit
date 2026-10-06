@@ -5,9 +5,9 @@ export function createGame(parent: string): Phaser.Game {
   const config: Phaser.Types.Core.GameConfig = {
     type: Phaser.AUTO,
     parent,
-    width: 960,
+    width: 620,
     height: 640,
-    backgroundColor: '#0f172a',
+    backgroundColor: '#020617',
     scene: [GameScene],
     scale: {
       mode: Phaser.Scale.FIT,
