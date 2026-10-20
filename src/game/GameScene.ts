@@ -65,6 +65,7 @@ export class GameScene extends Phaser.Scene {
   private packetGfx!: Phaser.GameObjects.Graphics;
   private packetTimer = 0;
   private laserFlicker = 0;
+  private visualTime = 0;
   private toastTween?: Phaser.Tweens.Tween;
 
   constructor() {
@@ -99,10 +100,21 @@ export class GameScene extends Phaser.Scene {
     });
 
     onToast((msg) => this.showToast(msg));
+    // TweenManager считает время по Date.now(): исключаем длительность паузы.
+    let pausedAt = 0;
+    this.events.on(Phaser.Scenes.Events.PAUSE, () => { pausedAt = Date.now(); });
+    this.events.on(Phaser.Scenes.Events.RESUME, () => {
+      const pausedMs = Date.now() - pausedAt;
+      this.tweens.startTime += pausedMs;
+      this.tweens.prevTime += pausedMs;
+    });
+    if (gameState.paused) this.scene.pause();
   }
 
   update(_time: number, delta: number): void {
+    if (gameState.paused) return;
     const dt = Math.min(delta / 1000, 0.1);
+    this.visualTime += dt * 1000;
 
     this.updateStars(dt);
     this.updatePackets(dt);
@@ -157,7 +169,7 @@ export class GameScene extends Phaser.Scene {
         star.x = this.W + 4;
         star.y = Phaser.Math.Between(0, this.H);
       }
-      const tw = 0.55 + 0.45 * Math.sin(this.time.now / 300 + star.x);
+      const tw = 0.55 + 0.45 * Math.sin(this.visualTime / 300 + star.x);
       this.starGfx.fillStyle(0xffffff, star.base * tw);
       this.starGfx.fillCircle(star.x, star.y, star.r);
     }
@@ -215,7 +227,7 @@ export class GameScene extends Phaser.Scene {
     this.glowGfx.clear();
 
     const thrusting = s.activity === 'travel' || s.activity === 'explore';
-    const pulse = 0.5 + 0.5 * Math.sin(this.time.now / 90);
+    const pulse = 0.5 + 0.5 * Math.sin(this.visualTime / 90);
     const flameLen = thrusting ? 14 + 10 * pulse : 6 + 3 * pulse;
 
     // Пламя двигателя
@@ -233,7 +245,7 @@ export class GameScene extends Phaser.Scene {
     // Щит вокруг зонда
     this.shipShieldGfx.clear();
     if (s.shieldTimer > 0) {
-      const a = 0.35 + 0.3 * Math.sin(this.time.now / 70);
+      const a = 0.35 + 0.3 * Math.sin(this.visualTime / 70);
       this.drawHex(this.shipShieldGfx, 0, 0, 58, 0x22d3ee, a, 2.5);
     } else if (s.activity === 'storm') {
       this.drawHex(this.shipShieldGfx, 0, 0, 52, 0xef4444, 0.12, 1.5);
@@ -354,7 +366,7 @@ export class GameScene extends Phaser.Scene {
     const ty = this.asteroid.y;
     const len = Phaser.Math.Distance.Between(sx, sy, tx, ty);
     const ang = Math.atan2(ty - sy, tx - sx);
-    const wob = 1 + 0.25 * Math.sin(this.time.now / 40);
+    const wob = 1 + 0.25 * Math.sin(this.visualTime / 40);
 
     this.laserA.setPosition(sx, sy).setRotation(ang).setSize(len, 3 * wob).setAlpha(0.9);
     this.laserB.setPosition(sx, sy).setRotation(ang).setSize(len, 7 * wob).setAlpha(0.35);

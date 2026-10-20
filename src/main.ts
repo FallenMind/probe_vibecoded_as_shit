@@ -60,6 +60,7 @@ app.innerHTML = `
     </header>
 
     <div id="offline-banner" class="offline hidden"></div>
+    <div id="pause-banner" class="offline hidden" role="status">Пауза — P / Escape: продолжить</div>
 
     <section class="card resources">
       <div class="chip"><span class="chip-icon">⚡</span><span class="chip-val" id="res-energy">0</span><small>Энергия</small></div>
@@ -116,6 +117,7 @@ const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) 
 
 const el = {
   offline: $('offline-banner'),
+  pause: $('pause-banner'),
   resEnergy: $('res-energy'),
   resOre: $('res-ore'),
   resData: $('res-data'),
@@ -162,6 +164,7 @@ function buildUpgrades(): void {
 
     const btn = row.querySelector('button') as HTMLButtonElement;
     btn.addEventListener('click', () => {
+      if (gameState.paused) return;
       const err = buyUpgrade(gameState, def.id);
       if (err) flashMsg(err);
     });
@@ -202,22 +205,26 @@ function pulse(el2: HTMLElement): void {
 // ---------------------------------------------------------------------------
 
 el.btnAction.addEventListener('click', () => {
+  if (gameState.paused) return;
   const err = clickAction(gameState);
   if (err) flashMsg(err);
   pulse(el.btnAction);
 });
 
 el.btnHasten.addEventListener('click', () => {
+  if (gameState.paused) return;
   const err = hasten(gameState);
   if (err) flashMsg(err);
 });
 
 el.btnRepair.addEventListener('click', () => {
+  if (gameState.paused) return;
   const err = repair(gameState);
   if (err) flashMsg(err);
 });
 
 el.btnReset.addEventListener('click', () => {
+  if (gameState.paused) return;
   if (window.confirm('Сбросить весь прогресс миссии?')) {
     resetGame(gameState);
     buildUpgrades();
@@ -239,6 +246,8 @@ function gameLoop(): void {
   const dt = Math.min((now - lastTick) / 1000, 2);
   lastTick = now;
 
+  if (gameState.paused) return;
+
   tick(gameState, dt);
 
   saveAccum += dt;
@@ -253,6 +262,8 @@ function gameLoop(): void {
 
 function updateUi(): void {
   const s = gameState;
+  el.pause.classList.toggle('hidden', !s.paused);
+  el.btnReset.disabled = s.paused;
 
   // Ресурсы
   const hMax = 100 + 40 * (s.upgrades.armor ?? 0);
@@ -273,7 +284,7 @@ function updateUi(): void {
   el.activityBar.style.width = `${Math.round(Math.min(1, s.activityProgress) * 100)}%`;
 
   const canInteract = s.activity !== 'charge' && s.activity !== 'travel';
-  el.btnAction.disabled = !canInteract;
+  el.btnAction.disabled = s.paused || !canInteract;
   switch (s.activity) {
     case 'explore':
       el.btnAction.textContent = `📡 Собрать данные (+${clickData(s)} 📡)`;
@@ -292,12 +303,12 @@ function updateUi(): void {
       break;
   }
 
-  el.btnHasten.disabled = s.activity === 'charge' || s.activity === 'dead' || s.energy < 10;
+  el.btnHasten.disabled = s.paused || s.activity === 'charge' || s.activity === 'dead' || s.energy < 10;
 
   const rCost = repairCost(s);
   el.btnRepair.textContent =
     s.activity === 'dead' ? `🚨 Аварийный ремонт (${rCost} 🪨)` : `🔧 Ремонт (${rCost} 🪨)`;
-  el.btnRepair.disabled = rCost <= 0 || s.ore < rCost;
+  el.btnRepair.disabled = s.paused || rCost <= 0 || s.ore < rCost;
 
   // Тайны
   const nextMyst = nextMysteryData(s);
@@ -313,7 +324,7 @@ function updateUi(): void {
     const maxed = lvl >= def.maxLevel;
     ref.lvl.textContent = String(lvl);
     ref.cost.textContent = maxed ? 'MAX' : `${def.cost(lvl)} 🪨`;
-    ref.btn.disabled = maxed || s.ore < def.cost(lvl);
+    ref.btn.disabled = s.paused || maxed || s.ore < def.cost(lvl);
     ref.row.classList.toggle('maxed', maxed);
   }
 
@@ -351,7 +362,28 @@ updateSectorLabel();
 // Запуск
 // ---------------------------------------------------------------------------
 
-win.__probeGame = createGame('game');
+const game = createGame('game');
+win.__probeGame = game;
 win.__probeLoop = window.setInterval(gameLoop, 100);
+
+function onPauseKey(event: KeyboardEvent): void {
+  if (event.code !== 'KeyP' && event.code !== 'Escape') return;
+  event.preventDefault();
+  if (event.repeat) return;
+
+  gameState.paused = !gameState.paused;
+  // Не включаем время паузы в следующий игровой шаг.
+  lastTick = performance.now();
+  if (gameState.paused) {
+    if (game.scene.isActive('GameScene')) game.scene.pause('GameScene');
+  } else if (game.scene.isPaused('GameScene')) {
+    game.scene.resume('GameScene');
+  }
+  updateUi();
+}
+
+window.addEventListener('keydown', onPauseKey);
+import.meta.hot?.dispose(() => window.removeEventListener('keydown', onPauseKey));
+updateUi();
 
 export {};

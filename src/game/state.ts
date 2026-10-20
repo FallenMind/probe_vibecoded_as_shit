@@ -15,6 +15,7 @@ export interface LogEntry {
 }
 
 export interface GameState {
+  paused: boolean;
   /** Ресурсы */
   energy: number; // текущая энергия
   ore: number; // руда / материалы
@@ -254,6 +255,7 @@ function log(s: GameState, msg: string): void {
 
 function createState(): GameState {
   return {
+    paused: false,
     energy: 100,
     ore: 0,
     data: 0,
@@ -288,6 +290,7 @@ function createState(): GameState {
 const SAVE_KEY = 'probe-idle-save-v1';
 
 export function saveGame(s: GameState): void {
+  if (s.paused) return;
   s.lastSave = Date.now();
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify(s));
@@ -297,6 +300,7 @@ export function saveGame(s: GameState): void {
 }
 
 export function resetGame(s: GameState): void {
+  if (s.paused) return;
   try {
     localStorage.removeItem(SAVE_KEY);
   } catch {
@@ -346,6 +350,7 @@ export function loadGame(): GameState {
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<GameState>;
       Object.assign(s, parsed);
+      s.paused = false;
       s.activity = parsed.activity ?? 'explore';
       s.pendingToast = null;
       applyOffline(s);
@@ -423,6 +428,7 @@ function spawnAsteroid(s: GameState): void {
 }
 
 export function tick(s: GameState, dt: number): void {
+  if (s.paused) return;
   dt = Math.min(dt, 1);
   s.playTime += dt;
 
@@ -544,6 +550,7 @@ export function tick(s: GameState, dt: number): void {
 
 /** Клик по главной кнопке — зависит от текущей фазы. */
 export function clickAction(s: GameState): string | null {
+  if (s.paused) return null;
   s.clicks += 1;
   switch (s.activity) {
     case 'explore': {
@@ -583,6 +590,7 @@ export function clickAction(s: GameState): string | null {
 }
 
 export function hasten(s: GameState): string | null {
+  if (s.paused) return null;
   if (s.activity === 'charge') return 'Идёт подзарядка';
   if (s.activity === 'dead') return 'Нужен ремонт корпуса';
   if (s.energy < 10) return 'Нужно 10 ⚡';
@@ -593,6 +601,7 @@ export function hasten(s: GameState): string | null {
 }
 
 export function buyUpgrade(s: GameState, id: string): string | null {
+  if (s.paused) return null;
   const def = UPGRADES.find((u) => u.id === id);
   if (!def) return null;
   const lvl = upgradeLevel(s, id);
@@ -607,6 +616,7 @@ export function buyUpgrade(s: GameState, id: string): string | null {
 }
 
 export function repair(s: GameState): string | null {
+  if (s.paused) return null;
   const cost = repairCost(s);
   if (cost <= 0) return 'Корпус в порядке';
   if (s.ore < cost) return `Нужно ${cost} 🪨`;
