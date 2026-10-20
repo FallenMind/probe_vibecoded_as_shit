@@ -11,7 +11,7 @@ import {
   canHasten,
   HASTEN_ENERGY_COST,
   SHIELD_ENERGY_PER_SECOND,
-  PHASE_DURATION_SECONDS,
+  PHASE_TRANSITIONS_REQUIRED,
   phaseNumber,
   phasePalette,
   difficulty,
@@ -289,10 +289,9 @@ function updateUi(): void {
   app.style.setProperty('--accent', palette.accent);
   app.style.setProperty('--phase-background', palette.background);
   const modifiers = difficulty(s);
-  const remaining = Math.ceil(Math.min(PHASE_DURATION_SECONDS,
-    phaseNumber(s) * PHASE_DURATION_SECONDS - s.phaseElapsed));
+  const transitions = s.phaseTransitions % PHASE_TRANSITIONS_REQUIRED;
   el.phaseStatus.textContent = s.phaseMode
-    ? `Фаза ${phaseNumber(s)} · следующая через ${remaining} с`
+    ? `Фаза ${phaseNumber(s)} · переходы: ${transitions}/${PHASE_TRANSITIONS_REQUIRED}`
     : 'Стандартный режим · O: включить фазы';
   el.phaseStatus.title = `Урон ×${modifiers.damage.toFixed(2)} · расход энергии ×${modifiers.energy.toFixed(2)} · прочность новых астероидов ×${modifiers.asteroidHP.toFixed(2)}`;
 
