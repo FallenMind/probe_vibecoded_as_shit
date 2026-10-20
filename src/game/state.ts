@@ -7,15 +7,14 @@
  * износ корпуса и ограниченная энергия.
  */
 
+import { EVENT_CONFIG } from './eventConfig';
+
 export type Activity = 'explore' | 'mine' | 'travel' | 'storm' | 'charge' | 'dead';
 
 export const PHASE_TRANSITIONS_REQUIRED = 3;
 export const PHASE_DAMAGE_STEP = 0.15;
 export const PHASE_ENERGY_STEP = 0.10;
 export const PHASE_ASTEROID_HP_STEP = 0.20;
-export const THREAT_GRACE_SECONDS = 2;
-export const STORM_DURATION_SECONDS = 6;
-export const STORM_MAX_HULL_DAMAGE_PER_SECOND = 0.33;
 export const SHIELD_ENERGY_PER_SECOND = 8;
 export const HASTEN_ENERGY_COST = 10;
 
@@ -150,19 +149,6 @@ export const SECTOR_NAMES = [
   'Предел Авроры',
 ];
 
-const ASTEROID_NAMES = [
-  'Церерия-7',
-  'Рудный Обломок',
-  'Камень Кеплера',
-  'Глыба Ноктис',
-  'Кусок Хаоса',
-  'Осколок Валентины',
-  'Астероид Люмен',
-  'Гость Сириуса',
-  'Камень Мёрфи',
-  'Харон-малый',
-];
-
 // ---------------------------------------------------------------------------
 // Производные характеристики (зависят от уровня улучшений)
 // ---------------------------------------------------------------------------
@@ -221,16 +207,22 @@ function miningDamage(s: GameState): number {
 }
 
 export function exploreDuration(s: GameState): number {
-  return Math.max(4, 12 - 0.9 * upgradeLevel(s, 'antenna'));
+  const config = EVENT_CONFIG.exploration;
+  return Math.max(config.minDurationSeconds,
+    config.baseDurationSeconds - config.durationReductionPerAntennaLevel * upgradeLevel(s, 'antenna'));
 }
 
 function travelDuration(s: GameState): number {
-  return Math.max(1.5, 3 - 0.35 * upgradeLevel(s, 'scanner'));
+  const config = EVENT_CONFIG.travel;
+  return Math.max(config.minDurationSeconds,
+    config.baseDurationSeconds - config.durationReductionPerScannerLevel * upgradeLevel(s, 'scanner'));
 }
 
 function stormDps(s: GameState): number {
-  const damage = 5 * (1 + 0.03 * s.sector) * (1 - armorResist(s)) * difficulty(s).damage;
-  return Math.min(damage, hullMax(s) * STORM_MAX_HULL_DAMAGE_PER_SECOND);
+  const config = EVENT_CONFIG.storm;
+  const damage = config.baseDamagePerSecond * (1 + config.damageGrowthPerSector * s.sector) *
+    (1 - armorResist(s)) * difficulty(s).damage;
+  return Math.min(damage, hullMax(s) * config.maxHullDamagePerSecond);
 }
 
 export function repairCost(s: GameState): number {
@@ -240,7 +232,8 @@ export function repairCost(s: GameState): number {
 }
 
 export function nextMysteryData(s: GameState): number {
-  return Math.round(250 * Math.pow(1.9, s.mysteriesFound));
+  const config = EVENT_CONFIG.mystery;
+  return Math.round(config.baseDataRequired * Math.pow(config.dataRequirementGrowth, s.mysteriesFound));
 }
 
 export function sectorOf(distance: number): number {
@@ -325,10 +318,10 @@ function createState(): GameState {
     sector: 0,
     activity: 'explore',
     activityProgress: 0,
-    asteroidHP: 20,
-    asteroidMaxHP: 20,
+    asteroidHP: EVENT_CONFIG.asteroid.baseHP,
+    asteroidMaxHP: EVENT_CONFIG.asteroid.baseHP,
     asteroidRich: 18,
-    asteroidName: ASTEROID_NAMES[0],
+    asteroidName: EVENT_CONFIG.asteroid.names[0],
     stormTimer: 0,
     threatGraceTimer: 0,
     shieldActive: false,
@@ -381,9 +374,12 @@ function applyOffline(s: GameState): void {
   s.data += rate * away;
   s.totalData += rate * away;
 
-  const cycleDur = exploreDuration(s) + travelDuration(s) + 9 + (s.activity === 'storm' ? 6 : 0);
+  const cycleDur = exploreDuration(s) + travelDuration(s) + 9 +
+    (s.activity === 'storm' ? EVENT_CONFIG.storm.durationSeconds : 0);
   const cycles = Math.max(0, away / cycleDur) * 0.5;
-  const rich = (14 + 4 * s.sector) * (1 + 0.1 * upgradeLevel(s, 'scanner'));
+  const asteroidConfig = EVENT_CONFIG.asteroid;
+  const rich = (asteroidConfig.baseOre + asteroidConfig.orePerSector * s.sector) *
+    (1 + asteroidConfig.oreBonusPerScannerLevel * upgradeLevel(s, 'scanner'));
   const orePerCycle = rich * (1 + 0.15 * upgradeLevel(s, 'laser'));
   const oreGain = Math.floor(orePerCycle * cycles);
   if (oreGain > 0) {
@@ -417,7 +413,7 @@ export function loadGame(): GameState {
       s.phaseTransitions = parsed.phaseTransitions ?? Math.floor((phaseElapsed ?? 0) / 15) * PHASE_TRANSITIONS_REQUIRED;
       s.shieldActive = s.activity === 'storm' && (parsed.shieldActive ?? (shieldTimer ?? 0) > 0);
       // Старые сохранения с бурей тоже дают время на реакцию.
-      s.threatGraceTimer = parsed.threatGraceTimer ?? (s.activity === 'storm' ? THREAT_GRACE_SECONDS : 0);
+      s.threatGraceTimer = parsed.threatGraceTimer ?? (s.activity === 'storm' ? EVENT_CONFIG.storm.graceSeconds : 0);
       s.paused = false;
       s.activity = parsed.activity ?? 'explore';
       s.pendingToast = null;
@@ -463,15 +459,16 @@ function checkMystery(s: GameState): void {
     s.mysteriesFound += 1;
     let msg = '';
     const r = Math.random();
-    if (r < 0.4) {
+    const thresholds = EVENT_CONFIG.mystery.outcomeThresholds;
+    if (r < thresholds.ore) {
       const v = Math.round(40 + 25 * s.sector);
       s.ore += v;
       s.totalOre += v;
       msg = `🧬 Тайна разгадана! Обнаружены залежи: +${v} 🪨`;
-    } else if (r < 0.7) {
+    } else if (r < thresholds.repair) {
       s.hull = hullMax(s);
       msg = '🧬 Тайна разгадана! Найдено средство ремонта: корпус восстановлен';
-    } else if (r < 0.9) {
+    } else if (r < thresholds.energy) {
       s.energy = maxEnergy(s);
       msg = '🧬 Тайна разгадана! Энергополе переполнено: ⚡ до максимума';
     } else {
@@ -486,12 +483,15 @@ function checkMystery(s: GameState): void {
 }
 
 function spawnAsteroid(s: GameState): void {
-  const rich = (14 + 4 * s.sector) * (1 + 0.1 * upgradeLevel(s, 'scanner')) * (0.85 + Math.random() * 0.3);
-  const hp = 20 * (1 + 0.06 * s.sector) * difficulty(s).asteroidHP;
+  const config = EVENT_CONFIG.asteroid;
+  const rich = (config.baseOre + config.orePerSector * s.sector) *
+    (1 + config.oreBonusPerScannerLevel * upgradeLevel(s, 'scanner')) *
+    (config.minRichnessMultiplier + Math.random() * config.richnessMultiplierSpread);
+  const hp = config.baseHP * (1 + config.hpGrowthPerSector * s.sector) * difficulty(s).asteroidHP;
   s.asteroidMaxHP = Math.round(hp);
   s.asteroidHP = s.asteroidMaxHP;
   s.asteroidRich = Math.round(rich);
-  s.asteroidName = ASTEROID_NAMES[Math.floor(Math.random() * ASTEROID_NAMES.length)];
+  s.asteroidName = config.names[Math.floor(Math.random() * config.names.length)];
   toast(s, `☄️ На радаре астероид «${s.asteroidName}»`);
 }
 
@@ -537,13 +537,13 @@ export function tick(s: GameState, dt: number): void {
         s.ore += reward;
         s.totalOre += reward;
         log(s, `⛏️ «${s.asteroidName}» разрушен: +${reward} 🪨`);
-        if (Math.random() < 0.35) {
+        if (Math.random() < EVENT_CONFIG.storm.chanceAfterMining) {
           changeActivity(s, 'storm');
-          s.stormTimer = STORM_DURATION_SECONDS;
-          s.threatGraceTimer = THREAT_GRACE_SECONDS;
+          s.stormTimer = EVENT_CONFIG.storm.durationSeconds;
+          s.threatGraceTimer = EVENT_CONFIG.storm.graceSeconds;
           s.shieldActive = false;
-          log(s, `⚠️ Буря через ${THREAT_GRACE_SECONDS} с! Включите щит.`);
-          toast(s, `⚠️ Буря через ${THREAT_GRACE_SECONDS} с — включите щит!`);
+          log(s, `⚠️ Буря через ${EVENT_CONFIG.storm.graceSeconds} с! Включите щит.`);
+          toast(s, `⚠️ Буря через ${EVENT_CONFIG.storm.graceSeconds} с — включите щит!`);
         } else {
           changeActivity(s, 'travel');
         }
@@ -579,7 +579,7 @@ export function tick(s: GameState, dt: number): void {
         }
       }
       s.hull -= stormDps(s) * (dangerDt - protectedDt);
-      s.activityProgress = 1 - s.stormTimer / STORM_DURATION_SECONDS;
+      s.activityProgress = 1 - s.stormTimer / EVENT_CONFIG.storm.durationSeconds;
       if (s.stormTimer <= 0) {
         changeActivity(s, 'travel');
         s.activityProgress = 0;
