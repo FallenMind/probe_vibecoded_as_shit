@@ -9,6 +9,24 @@
 
 export type Activity = 'explore' | 'mine' | 'travel' | 'storm' | 'charge' | 'dead';
 
+export const PHASE_DURATION_SECONDS = 15;
+export const PHASE_DAMAGE_STEP = 0.15;
+export const PHASE_ENERGY_STEP = 0.10;
+export const PHASE_ASTEROID_HP_STEP = 0.20;
+export const THREAT_GRACE_SECONDS = 2;
+export const STORM_DURATION_SECONDS = 6;
+export const SHIELD_ENERGY_PER_SECOND = 8;
+export const HASTEN_ENERGY_COST = 10;
+// Компенсация погрешности при накоплении дробных шагов игрового времени.
+const TIMER_EPSILON_SECONDS = 1e-6;
+
+export const PHASE_PALETTES = [
+  { accent: '#22d3ee', background: '#020617', nebula: 0x312e81 },
+  { accent: '#fb923c', background: '#1c0d12', nebula: 0x9a3412 },
+  { accent: '#c084fc', background: '#140b26', nebula: 0x6b21a8 },
+  { accent: '#4ade80', background: '#031c18', nebula: 0x065f46 },
+];
+
 export interface LogEntry {
   t: number;
   msg: string;
@@ -16,6 +34,8 @@ export interface LogEntry {
 
 export interface GameState {
   paused: boolean;
+  phaseMode: boolean;
+  phaseElapsed: number;
   /** Ресурсы */
   energy: number; // текущая энергия
   ore: number; // руда / материалы
@@ -38,7 +58,8 @@ export interface GameState {
 
   /** Буря */
   stormTimer: number;
-  shieldTimer: number;
+  threatGraceTimer: number;
+  shieldActive: boolean;
 
   /** Прогресс */
   mysteriesFound: number;
@@ -151,6 +172,30 @@ export function upgradeLevel(s: GameState, id: string): number {
   return s.upgrades[id] ?? 0;
 }
 
+export function phaseNumber(s: GameState): number {
+  return s.phaseMode ? 1 + Math.floor((s.phaseElapsed + TIMER_EPSILON_SECONDS) / PHASE_DURATION_SECONDS) : 1;
+}
+
+export function difficulty(s: GameState) {
+  const level = phaseNumber(s) - 1;
+  return {
+    damage: 1 + level * PHASE_DAMAGE_STEP,
+    energy: 1 + level * PHASE_ENERGY_STEP,
+    asteroidHP: 1 + level * PHASE_ASTEROID_HP_STEP,
+  };
+}
+
+export function phasePalette(s: GameState) {
+  return PHASE_PALETTES[(phaseNumber(s) - 1) % PHASE_PALETTES.length];
+}
+
+export function togglePhaseMode(s: GameState): void {
+  if (s.paused) return;
+  s.phaseMode = !s.phaseMode;
+  s.phaseElapsed = 0;
+  toast(s, s.phaseMode ? 'Фаза 1 — режим нарастающей сложности' : 'Стандартный режим');
+}
+
 function maxEnergy(s: GameState): number {
   return 100 + 30 * upgradeLevel(s, 'energy');
 }
@@ -256,6 +301,8 @@ function log(s: GameState, msg: string): void {
 function createState(): GameState {
   return {
     paused: false,
+    phaseMode: false,
+    phaseElapsed: 0,
     energy: 100,
     ore: 0,
     data: 0,
@@ -269,7 +316,8 @@ function createState(): GameState {
     asteroidRich: 18,
     asteroidName: ASTEROID_NAMES[0],
     stormTimer: 0,
-    shieldTimer: 0,
+    threatGraceTimer: 0,
+    shieldActive: false,
     mysteriesFound: 0,
     totalData: 0,
     totalOre: 0,
@@ -348,8 +396,12 @@ export function loadGame(): GameState {
   try {
     const raw = localStorage.getItem(SAVE_KEY);
     if (raw) {
-      const parsed = JSON.parse(raw) as Partial<GameState>;
-      Object.assign(s, parsed);
+      const parsed = JSON.parse(raw) as Partial<GameState> & { shieldTimer?: number };
+      const { shieldTimer, ...saved } = parsed;
+      Object.assign(s, saved);
+      s.shieldActive = s.activity === 'storm' && (parsed.shieldActive ?? (shieldTimer ?? 0) > 0);
+      // Старые сохранения с бурей тоже дают время на реакцию.
+      s.threatGraceTimer = parsed.threatGraceTimer ?? (s.activity === 'storm' ? THREAT_GRACE_SECONDS : 0);
       s.paused = false;
       s.activity = parsed.activity ?? 'explore';
       s.pendingToast = null;
@@ -419,7 +471,7 @@ function checkMystery(s: GameState): void {
 
 function spawnAsteroid(s: GameState): void {
   const rich = (14 + 4 * s.sector) * (1 + 0.1 * upgradeLevel(s, 'scanner')) * (0.85 + Math.random() * 0.3);
-  const hp = 20 * (1 + 0.06 * s.sector);
+  const hp = 20 * (1 + 0.06 * s.sector) * difficulty(s).asteroidHP;
   s.asteroidMaxHP = Math.round(hp);
   s.asteroidHP = s.asteroidMaxHP;
   s.asteroidRich = Math.round(rich);
@@ -431,6 +483,16 @@ export function tick(s: GameState, dt: number): void {
   if (s.paused) return;
   dt = Math.min(dt, 1);
   s.playTime += dt;
+  if (s.phaseMode) {
+    const previousPhase = phaseNumber(s);
+    s.phaseElapsed += dt;
+    if (phaseNumber(s) !== previousPhase) {
+      const msg = `Фаза ${phaseNumber(s)} — сложность повышена`;
+      log(s, msg);
+      toast(s, msg);
+    }
+  }
+  const modifiers = difficulty(s);
 
   const regenMult = s.activity === 'charge' ? 3 : 1;
   s.energy = Math.min(maxEnergy(s), s.energy + energyRegen(s) * dt * regenMult);
@@ -443,8 +505,8 @@ export function tick(s: GameState, dt: number): void {
       s.data += gain;
       s.totalData += gain;
       s.distance += (16 * (1 + 0.05 * s.sector)) * dt;
-      s.hull = Math.max(1, s.hull - 0.12 * dt);
-      drain(s, 0.8, dt);
+      s.hull = Math.max(1, s.hull - 0.12 * modifiers.damage * dt);
+      drain(s, 0.8 * modifiers.energy, dt);
       checkSector(s);
       checkMystery(s);
       if (s.activityProgress >= 1) {
@@ -458,8 +520,8 @@ export function tick(s: GameState, dt: number): void {
       const dmg = miningDamage(s) * dt;
       s.asteroidHP -= dmg;
       s.activityProgress = 1 - Math.max(0, s.asteroidHP) / s.asteroidMaxHP;
-      s.hull -= 0.28 * dt;
-      drain(s, 2.0, dt);
+      s.hull -= 0.28 * modifiers.damage * dt;
+      drain(s, 2.0 * modifiers.energy, dt);
       if (s.asteroidHP <= 0) {
         const reward = Math.max(
           1,
@@ -470,10 +532,11 @@ export function tick(s: GameState, dt: number): void {
         log(s, `⛏️ «${s.asteroidName}» разрушен: +${reward} 🪨`);
         if (Math.random() < 0.35) {
           s.activity = 'storm';
-          s.stormTimer = 6;
-          s.shieldTimer = 0;
-          log(s, '⚠️ Солнечная буря! Отводите щит кликом.');
-          toast(s, '⚠️ Началась солнечная буря!');
+          s.stormTimer = STORM_DURATION_SECONDS;
+          s.threatGraceTimer = THREAT_GRACE_SECONDS;
+          s.shieldActive = false;
+          log(s, `⚠️ Буря через ${THREAT_GRACE_SECONDS} с! Включите щит.`);
+          toast(s, `⚠️ Буря через ${THREAT_GRACE_SECONDS} с — включите щит!`);
         } else {
           s.activity = 'travel';
         }
@@ -484,8 +547,8 @@ export function tick(s: GameState, dt: number): void {
     case 'travel': {
       s.activityProgress += dt / travelDuration(s);
       s.distance += (34 * (1 + 0.05 * s.sector)) * dt;
-      s.hull -= 0.06 * dt;
-      drain(s, 1.4, dt);
+      s.hull -= 0.06 * modifiers.damage * dt;
+      drain(s, 1.4 * modifiers.energy, dt);
       checkSector(s);
       if (s.activityProgress >= 1) {
         s.activity = 'explore';
@@ -494,17 +557,27 @@ export function tick(s: GameState, dt: number): void {
       break;
     }
     case 'storm': {
-      s.stormTimer -= dt;
-      if (s.shieldTimer > 0) {
-        s.shieldTimer -= dt;
-      } else {
-        s.hull -= stormDps(s) * dt;
+      const graceDt = Math.min(dt, s.threatGraceTimer);
+      s.threatGraceTimer = Math.max(0, s.threatGraceTimer - dt);
+      const dangerDt = Math.min(dt - graceDt, Math.max(0, s.stormTimer));
+      s.stormTimer = Math.max(0, s.stormTimer - dangerDt);
+      drain(s, 1.0 * modifiers.energy, dt);
+      let protectedDt = 0;
+      if (s.shieldActive) {
+        protectedDt = Math.min(dangerDt, s.energy / SHIELD_ENERGY_PER_SECOND);
+        drain(s, SHIELD_ENERGY_PER_SECOND, protectedDt);
+        if (s.energy <= 0.001) {
+          s.shieldActive = false;
+          toast(s, '⚠️ Щит отключён — закончилась энергия!');
+        }
       }
-      drain(s, 1.0, dt);
+      s.hull -= stormDps(s) * modifiers.damage * (dangerDt - protectedDt);
+      s.activityProgress = 1 - s.stormTimer / STORM_DURATION_SECONDS;
       if (s.stormTimer <= 0) {
         s.activity = 'travel';
         s.activityProgress = 0;
-        s.shieldTimer = 0;
+        s.shieldActive = false;
+        s.threatGraceTimer = 0;
         log(s, '🌤️ Буря стихла — можно лететь дальше');
       }
       break;
@@ -530,11 +603,14 @@ export function tick(s: GameState, dt: number): void {
   if (s.hull <= 0 && s.activity !== 'dead') {
     s.hull = 0;
     s.activity = 'dead';
+    s.shieldActive = false;
+    s.threatGraceTimer = 0;
     log(s, '☠️ Корпус разрушен! Нужен аварийный ремонт (клик — аварийная добыча).');
     toast(s, '☠️ КРИТИЧЕСКОЕ СОСТОЯНИЕ!');
   } else if (
     s.activity !== 'dead' &&
     s.activity !== 'charge' &&
+    s.activity !== 'storm' &&
     s.hull > 0 &&
     s.energy <= 0.001
   ) {
@@ -569,13 +645,9 @@ export function clickAction(s: GameState): string | null {
       return null;
     }
     case 'storm': {
-      if (s.energy >= 20) {
-        s.energy -= 20;
-        s.shieldTimer = 1.5;
-        toast(s, '🛡️ Щит отведён');
-      } else {
-        return 'Не хватает энергии (нужно 20 ⚡)';
-      }
+      if (!s.shieldActive && s.energy <= 0) return 'Нет энергии для щита';
+      s.shieldActive = !s.shieldActive;
+      toast(s, s.shieldActive ? '🛡️ Щит включён' : '🛡️ Щит выключен');
       return null;
     }
     case 'dead': {
@@ -589,14 +661,22 @@ export function clickAction(s: GameState): string | null {
   }
 }
 
+export function canHasten(s: GameState): boolean {
+  return !s.paused && (s.activity === 'explore' || s.activity === 'mine' || s.activity === 'travel') &&
+    s.activityProgress < 1 && s.energy >= HASTEN_ENERGY_COST;
+}
+
 export function hasten(s: GameState): string | null {
   if (s.paused) return null;
+  if (s.activity === 'storm') return 'Во время бури ускорение недоступно — включите щит';
   if (s.activity === 'charge') return 'Идёт подзарядка';
   if (s.activity === 'dead') return 'Нужен ремонт корпуса';
-  if (s.energy < 10) return 'Нужно 10 ⚡';
-  s.energy -= 10;
+  if (s.activityProgress >= 1) return 'Этап уже завершается';
+  if (s.energy < HASTEN_ENERGY_COST) return `Нужно ${HASTEN_ENERGY_COST} ⚡`;
+  s.energy -= HASTEN_ENERGY_COST;
+  if (s.activity === 'mine') s.asteroidHP = 0;
   s.activityProgress = 1;
-  toast(s, '⚡ Фаза ускорена');
+  toast(s, '⚡ Текущий этап завершается');
   return null;
 }
 

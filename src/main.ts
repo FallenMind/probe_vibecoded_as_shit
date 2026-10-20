@@ -8,6 +8,14 @@ import {
   resetGame,
   clickAction,
   hasten,
+  canHasten,
+  HASTEN_ENERGY_COST,
+  SHIELD_ENERGY_PER_SECOND,
+  PHASE_DURATION_SECONDS,
+  phaseNumber,
+  phasePalette,
+  difficulty,
+  togglePhaseMode,
   buyUpgrade,
   repair,
   fmt,
@@ -45,7 +53,7 @@ const ACTIVITY_META: Record<Activity, { icon: string; title: string; desc: strin
   explore: { icon: '🔭', title: 'ИССЛЕДОВАНИЕ', desc: 'Зонд медленно накапливает научные данные' },
   mine: { icon: '⛏️', title: 'ДОБЫЧА РУДЫ', desc: 'Лазер дробит астероид на материалы' },
   travel: { icon: '🚀', title: 'ПЕРЕЛЁТ', desc: 'Марш к следующему региону системы' },
-  storm: { icon: '🌩️', title: 'СОЛНЕЧНАЯ БУРЯ', desc: 'Кликай «Отвести щит» (20⚡), чтобы защитить корпус' },
+  storm: { icon: '🌩️', title: 'СОЛНЕЧНАЯ БУРЯ', desc: 'Включите щит одним нажатием, чтобы защитить корпус' },
   charge: { icon: '🔋', title: 'ПОДЗАРЯДКА', desc: 'Энергия на нуле — ждём восстановления' },
   dead: { icon: '☠️', title: 'КРИТ. СОСТОЯНИЕ', desc: 'Корпус разрушен! Кликай — аварийная добыча руды' },
 };
@@ -61,6 +69,7 @@ app.innerHTML = `
 
     <div id="offline-banner" class="offline hidden"></div>
     <div id="pause-banner" class="offline hidden" role="status">Пауза — P / Escape: продолжить</div>
+    <button id="btn-phase-mode" class="btn" aria-pressed="false">Режим фаз: выкл. (O)</button>
 
     <section class="card resources">
       <div class="chip"><span class="chip-icon">⚡</span><span class="chip-val" id="res-energy">0</span><small>Энергия</small></div>
@@ -78,7 +87,7 @@ app.innerHTML = `
       <div class="progress"><div id="activity-bar" class="bar-fill"></div></div>
       <button id="btn-action" class="btn btn-primary"></button>
       <div class="quick-row">
-        <button id="btn-hasten" class="btn" title="Пропустить текущую фазу за 10 ⚡">⚡ Ускорить (10⚡)</button>
+        <button id="btn-hasten" class="btn"></button>
         <button id="btn-repair" class="btn"></button>
       </div>
       <div id="action-msg" class="action-msg"></div>
@@ -106,7 +115,7 @@ app.innerHTML = `
       <button id="btn-reset" class="btn btn-danger">↺ Сбросить прогресс</button>
     </footer>
   </aside>
-  <main id="game"></main>
+  <main id="game"><div id="phase-status" role="status"></div></main>
 `;
 
 // ---------------------------------------------------------------------------
@@ -118,6 +127,8 @@ const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) 
 const el = {
   offline: $('offline-banner'),
   pause: $('pause-banner'),
+  phaseStatus: $('phase-status'),
+  btnPhaseMode: $<HTMLButtonElement>('btn-phase-mode'),
   resEnergy: $('res-energy'),
   resOre: $('res-ore'),
   resData: $('res-data'),
@@ -209,12 +220,19 @@ el.btnAction.addEventListener('click', () => {
   const err = clickAction(gameState);
   if (err) flashMsg(err);
   pulse(el.btnAction);
+  updateUi();
+});
+
+el.btnPhaseMode.addEventListener('click', () => {
+  togglePhaseMode(gameState);
+  updateUi();
 });
 
 el.btnHasten.addEventListener('click', () => {
   if (gameState.paused) return;
   const err = hasten(gameState);
   if (err) flashMsg(err);
+  updateUi();
 });
 
 el.btnRepair.addEventListener('click', () => {
@@ -264,6 +282,19 @@ function updateUi(): void {
   const s = gameState;
   el.pause.classList.toggle('hidden', !s.paused);
   el.btnReset.disabled = s.paused;
+  el.btnPhaseMode.disabled = s.paused;
+  el.btnPhaseMode.setAttribute('aria-pressed', String(s.phaseMode));
+  el.btnPhaseMode.textContent = `Режим фаз: ${s.phaseMode ? 'вкл.' : 'выкл.'} (O)`;
+  const palette = phasePalette(s);
+  app.style.setProperty('--accent', palette.accent);
+  app.style.setProperty('--phase-background', palette.background);
+  const modifiers = difficulty(s);
+  const remaining = Math.ceil(Math.min(PHASE_DURATION_SECONDS,
+    phaseNumber(s) * PHASE_DURATION_SECONDS - s.phaseElapsed));
+  el.phaseStatus.textContent = s.phaseMode
+    ? `Фаза ${phaseNumber(s)} · следующая через ${remaining} с`
+    : 'Стандартный режим · O: включить фазы';
+  el.phaseStatus.title = `Урон ×${modifiers.damage.toFixed(2)} · расход энергии ×${modifiers.energy.toFixed(2)} · прочность новых астероидов ×${modifiers.asteroidHP.toFixed(2)}`;
 
   // Ресурсы
   const hMax = 100 + 40 * (s.upgrades.armor ?? 0);
@@ -281,6 +312,13 @@ function updateUi(): void {
   el.activityIcon.textContent = meta.icon;
   el.activityTitle.textContent = meta.title;
   el.activityDesc.textContent = meta.desc;
+  if (s.activity === 'storm') {
+    el.activityDesc.textContent = s.threatGraceTimer > 0
+      ? `Буря через ${s.threatGraceTimer.toFixed(1)} с — урона пока нет. ${s.shieldActive ? 'Щит включён.' : 'Включите щит!'}`
+      : `Буря: ещё ${s.stormTimer.toFixed(1)} с. ${s.shieldActive ? 'Щит защищает корпус.' : 'Корпус получает урон — включите щит!'}`;
+  }
+  el.activityDesc.classList.toggle('threat', s.activity === 'storm' && !s.shieldActive);
+  el.btnAction.setAttribute('aria-pressed', String(s.activity === 'storm' && s.shieldActive));
   el.activityBar.style.width = `${Math.round(Math.min(1, s.activityProgress) * 100)}%`;
 
   const canInteract = s.activity !== 'charge' && s.activity !== 'travel';
@@ -293,7 +331,9 @@ function updateUi(): void {
       el.btnAction.textContent = `⛏️ Бурить (+${clickMineDmg(s)} урона)`;
       break;
     case 'storm':
-      el.btnAction.textContent = '🛡️ Отвести щит (20⚡)';
+      el.btnAction.textContent = s.shieldActive
+        ? `🛡️ Щит вкл. (${SHIELD_ENERGY_PER_SECOND} ⚡/с) — выключить`
+        : `🛡️ Включить щит (${SHIELD_ENERGY_PER_SECOND} ⚡/с)`;
       break;
     case 'dead':
       el.btnAction.textContent = `⛏️ Аварийная добыча (+${emergencyOre(s)} 🪨)`;
@@ -303,7 +343,13 @@ function updateUi(): void {
       break;
   }
 
-  el.btnHasten.disabled = s.paused || s.activity === 'charge' || s.activity === 'dead' || s.energy < 10;
+  const hastenLabel = s.activity === 'mine' ? 'Завершить добычу'
+    : s.activity === 'travel' ? 'Завершить перелёт' : 'Завершить поиск';
+  el.btnHasten.textContent = `⚡ ${hastenLabel} (${HASTEN_ENERGY_COST} ⚡)`;
+  el.btnHasten.title = s.activity === 'storm'
+    ? 'Бурю ускорить нельзя. Включите щит для защиты корпуса.'
+    : 'Завершает текущий этап за энергию. Переход произойдёт на следующем игровом шаге.';
+  el.btnHasten.disabled = !canHasten(s);
 
   const rCost = repairCost(s);
   el.btnRepair.textContent =
@@ -366,10 +412,16 @@ const game = createGame('game');
 win.__probeGame = game;
 win.__probeLoop = window.setInterval(gameLoop, 100);
 
-function onPauseKey(event: KeyboardEvent): void {
-  if (event.code !== 'KeyP' && event.code !== 'Escape') return;
+function onGameKey(event: KeyboardEvent): void {
+  if (event.code !== 'KeyP' && event.code !== 'Escape' && event.code !== 'KeyO') return;
   event.preventDefault();
   if (event.repeat) return;
+
+  if (event.code === 'KeyO') {
+    togglePhaseMode(gameState);
+    updateUi();
+    return;
+  }
 
   gameState.paused = !gameState.paused;
   // Не включаем время паузы в следующий игровой шаг.
@@ -382,8 +434,8 @@ function onPauseKey(event: KeyboardEvent): void {
   updateUi();
 }
 
-window.addEventListener('keydown', onPauseKey);
-import.meta.hot?.dispose(() => window.removeEventListener('keydown', onPauseKey));
+window.addEventListener('keydown', onGameKey);
+import.meta.hot?.dispose(() => window.removeEventListener('keydown', onGameKey));
 updateUi();
 
 export {};

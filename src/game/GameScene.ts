@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { Activity, gameState, onToast, sectorName } from './state';
+import { Activity, gameState, onToast, sectorName, phasePalette } from './state';
 
 interface Star {
   x: number;
@@ -66,6 +66,7 @@ export class GameScene extends Phaser.Scene {
   private packetTimer = 0;
   private laserFlicker = 0;
   private visualTime = 0;
+  private paletteKey = '';
   private toastTween?: Phaser.Tweens.Tween;
 
   constructor() {
@@ -88,6 +89,7 @@ export class GameScene extends Phaser.Scene {
     this.createAsteroid();
     this.createLaser();
     this.createTexts();
+    this.updatePalette();
 
     // Зонд качается на «волнах» космоса
     this.tweens.add({
@@ -115,6 +117,7 @@ export class GameScene extends Phaser.Scene {
     if (gameState.paused) return;
     const dt = Math.min(delta / 1000, 0.1);
     this.visualTime += dt * 1000;
+    this.updatePalette();
 
     this.updateStars(dt);
     this.updatePackets(dt);
@@ -129,6 +132,7 @@ export class GameScene extends Phaser.Scene {
   // -------------------------------------------------------------------------
 
   private drawNebula(): void {
+    const palette = phasePalette(gameState);
     const blobs: Array<[number, number, number, number]> = [
       [this.W * 0.78, this.H * 0.18, 150, 0x312e81],
       [this.W * 0.22, this.H * 0.82, 120, 0x831843],
@@ -136,9 +140,19 @@ export class GameScene extends Phaser.Scene {
       [this.W * 0.5, this.H * 0.5, 90, 0x134e4a],
     ];
     for (const [x, y, r, color] of blobs) {
-      this.bgGfx.fillStyle(color, 0.35);
+      this.bgGfx.fillStyle(palette.background === '#020617' ? color : palette.nebula, 0.35);
       this.bgGfx.fillCircle(x, y, r);
     }
+  }
+
+  private updatePalette(): void {
+    const palette = phasePalette(gameState);
+    if (this.paletteKey === palette.background) return;
+    this.paletteKey = palette.background;
+    this.cameras.main.setBackgroundColor(palette.background);
+    this.bgGfx.clear();
+    this.drawNebula();
+    this.createPlanet();
   }
 
   private createPlanet(): void {
@@ -244,7 +258,7 @@ export class GameScene extends Phaser.Scene {
 
     // Щит вокруг зонда
     this.shipShieldGfx.clear();
-    if (s.shieldTimer > 0) {
+    if (s.shieldActive) {
       const a = 0.35 + 0.3 * Math.sin(this.visualTime / 70);
       this.drawHex(this.shipShieldGfx, 0, 0, 58, 0x22d3ee, a, 2.5);
     } else if (s.activity === 'storm') {
@@ -472,9 +486,14 @@ export class GameScene extends Phaser.Scene {
       `📡 ${Math.floor(s.data).toLocaleString('ru-RU')}   🪨 ${Math.floor(s.ore).toLocaleString('ru-RU')}`,
     );
 
-    // Предупреждение о критическом состоянии
-    const wantAlpha = s.activity === 'dead' ? 1 : 0;
-    this.warningText.setAlpha(Phaser.Math.Linear(this.warningText.alpha, wantAlpha, 0.04));
+    // Явное предупреждение до урона и состояние защиты во время бури.
+    const warning = s.activity === 'dead' ? '☠ КРИТИЧЕСКОЕ СОСТОЯНИЕ'
+      : s.activity !== 'storm' ? ''
+      : s.threatGraceTimer > 0 ? `⚠ БУРЯ ЧЕРЕЗ ${s.threatGraceTimer.toFixed(1)} с\n${s.shieldActive ? 'ЩИТ ГОТОВ' : 'ВКЛЮЧИТЕ ЩИТ'}`
+      : s.shieldActive ? `🛡 ЩИТ ВКЛЮЧЁН\nБуря: ${s.stormTimer.toFixed(1)} с`
+      : `⚠ КОРПУС ПОЛУЧАЕТ УРОН\nВКЛЮЧИТЕ ЩИТ · ${s.stormTimer.toFixed(1)} с`;
+    this.warningText.setText(warning).setFontSize(24).setAlign('center')
+      .setColor(s.shieldActive ? '#67e8f9' : '#fca5a5').setAlpha(warning ? 1 : 0);
   }
 
   private drawBar(x: number, y: number, w: number, h: number, pct: number, color: number): void {
