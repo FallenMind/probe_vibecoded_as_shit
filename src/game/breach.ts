@@ -62,7 +62,7 @@ export class PreInfinityGame {
         saved.balanceVersion = 2;
       }
       saved.pickUnlocked ??= saved.auto || saved.weapon === 'pick';
-      saved.repeatablesUnlocked ??= saved.furthestBlock > 0 || saved.stones.filter(stone => stone.block === 0).length <= saved.size * saved.size * (1 - C.repeatableUnlockFraction);
+      saved.repeatablesUnlocked = !!saved.repeatablesUnlocked || saved.furthestBlock > 0 || saved.stones.filter(stone => stone.block === 0).length <= saved.size * saved.size * (1 - C.repeatableUnlockFraction);
       saved.attackClock ??= 0;
       saved.fistLevel ??= saved.meleeLevel;
       saved.pickLevel ??= saved.meleeLevel;

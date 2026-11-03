@@ -21,7 +21,7 @@ export const BREACH_CONFIG = {
   pickFalloffExponent: 1.5,
   attackInterval: 0.55,
   animationSeconds: 0.32,
-  repeatableUnlockFraction: 0.5,
+  repeatableUnlockFraction: 0.3,
   maxExpansion: 3,
   movementSpeed: 2.5,
   movementSpeedPerLevel: 0.25,

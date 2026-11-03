@@ -34,7 +34,7 @@ app.innerHTML = `
           <div class="resource"><span class="resource-icon point">⬡</span><span><small>ПРОРЫВ</small><strong id="points">0</strong></span></div>
         </section>
         <div class="list-heading"><div><span class="eyebrow">ИНСТРУМЕНТЫ И НАВЫКИ</span><h2>Улучшения</h2></div><span>↗</span></div>
-        <p id="upgrade-hint" class="upgrade-hint hidden">Повторяемые улучшения: очистите 50% карты.</p>
+        <p id="upgrade-hint" class="upgrade-hint hidden">Повторяемые улучшения: очистите ${Math.round(C.repeatableUnlockFraction * 100)}% карты.</p>
         <div class="upgrades">
           <button class="upgrade" data-upgrade="auto"><span class="upgrade-icon">⚙</span><span class="upgrade-copy"><strong>Сборщик</strong><small>Автоматически добывает камень и открывает оружие.</small></span><span class="price"></span></button>
           <button class="upgrade" data-upgrade="pick"><span class="upgrade-icon">⛏</span><span class="upgrade-copy"><strong>Кремневая кирка</strong><small>Удар в секторе 210°.</small></span><span class="price"></span></button>

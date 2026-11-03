@@ -277,7 +277,7 @@ test('weapon patterns, discrete timing and speed', () => {
   assert.equal(corner.hp, 10);
 });
 
-test('collector unlocks weapons early; repeatables unlock at half a map and persist', () => {
+test('collector unlocks weapons early; repeatables unlock at 30% of a map and persist', () => {
   const game = new PreInfinityGame();
   const s = game.state;
   assert.equal(s.weapon, 'fists');
@@ -294,12 +294,25 @@ test('collector unlocks weapons early; repeatables unlock at half a map and pers
   assert.equal(game.buy('ranged'), true);
   assert.equal(game.buy('penetration'), true);
   const remainingBeforeUnlock = Math.floor(s.size * s.size * (1 - C.repeatableUnlockFraction));
+  assert.equal(C.repeatableUnlockFraction, 0.3);
+  assert.equal(s.size * s.size - remainingBeforeUnlock, 188);
   const count = game.currentStones().length - remainingBeforeUnlock;
   for (const stone of [...game.currentStones()].slice(0, count - 1)) game.destroy(stone);
   assert.equal(s.repeatablesUnlocked, false);
   game.destroy(game.currentStones()[0]);
   assert.equal(s.repeatablesUnlocked, true);
   assert.equal(game.buy('speed'), true);
+  game.save();
+  assert.equal(new PreInfinityGame().state.repeatablesUnlocked, true);
+});
+
+test('existing saves unlock repeatables after the new 30% threshold', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  const count = Math.ceil(s.size * s.size * C.repeatableUnlockFraction);
+  for (const stone of [...game.currentStones()].slice(0, count)) game.destroy(stone);
+  s.repeatablesUnlocked = false;
+  s.paused = true;
   game.save();
   assert.equal(new PreInfinityGame().state.repeatablesUnlocked, true);
 });
