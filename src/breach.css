@@ -1,0 +1,77 @@
+:root { font-family: Inter, ui-sans-serif, system-ui, sans-serif; color: #dce4e4; background: #0b151b; font-synthesis: none; }
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; background: #0b151b; }
+button { font: inherit; cursor: pointer; }
+button:disabled { cursor: default; }
+.shell { max-width: 1480px; margin: auto; padding: 0 32px 48px; }
+.topbar { height: 82px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #263942; }
+.brand { display: flex; gap: 11px; align-items: center; }
+.brand-icon { display: grid; place-items: center; width: 39px; height: 39px; background: #e9bd76; color: #142127; font-size: 25px; border-radius: 10px; }
+.brand strong, .brand small { display: block; letter-spacing: .15em; }
+.brand strong { font-size: 13px; color: #f5f1e7; }
+.brand small { margin-top: 3px; color: #779096; font-size: 9px; }
+.top-actions { display: flex; align-items: center; gap: 18px; color: #7b9295; font-size: 10px; letter-spacing: .12em; }
+.icon-button { width: 38px; height: 38px; border: 1px solid #344b52; background: #14242c; color: #e3ebea; border-radius: 9px; }
+.layout { display: grid; grid-template-columns: minmax(0, 1fr) 390px; gap: 28px; padding-top: 32px; }
+.main-column { min-width: 0; }
+.section-heading, .side-heading, .list-heading { display: flex; justify-content: space-between; align-items: end; gap: 10px; }
+.eyebrow { display: block; color: #8da2a3; font-size: 9px; font-weight: 700; letter-spacing: .16em; }
+h1, h2, p { margin: 0; }
+h1 { margin-top: 8px; color: #f4f2e9; font-size: clamp(23px, 2.3vw, 34px); letter-spacing: -.035em; }
+.story { max-width: 490px; margin-top: 9px; color: #8da2a3; font-size: 11px; line-height: 1.5; }
+.live-badge { white-space: nowrap; color: #8ba8a2; font-size: 9px; letter-spacing: .1em; }
+.live-badge i { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #8ed0a8; margin-right: 6px; }
+.map-card { margin-top: 20px; border: 1px solid #30434a; background: #101f28; border-radius: 14px; overflow: hidden; }
+.map-top { display: flex; justify-content: space-between; padding: 21px 24px 12px; }
+.map-top strong { display: block; margin-top: 6px; font-size: 25px; color: #e8e8dd; letter-spacing: -.05em; }
+.map-top strong em { color: #71878a; font-style: normal; font-size: 15px; }
+.map-top-right { text-align: right; }
+.map-top-right strong { color: #d7bd8c; font-size: 18px; }
+.map-wrap { position: relative; margin: auto; width: min(100%, 620px); aspect-ratio: 620 / 640; }
+#game { width: 100%; height: 100%; overflow: hidden; cursor: pointer; }
+#game canvas { display: block; }
+.gesture { position: absolute; left: 50%; top: 80%; font-size: 42px; color: #f5d093; filter: drop-shadow(0 2px 6px #000); pointer-events: none; animation: tap 1s ease-in-out infinite; }
+@keyframes tap { 50% { transform: translateY(10px) scale(.92); } }
+.paused-overlay { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; background: #09131dbb; color: #f0d2a1; font-weight: 800; letter-spacing: .2em; font-size: 24px; }
+.paused-overlay small { margin-top: 10px; color: #9aabad; font-size: 11px; }
+.hidden { display: none !important; }
+.map-bottom { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 24px 20px; }
+.map-key { color: #92a2a3; font-size: 9px; font-weight: 700; letter-spacing: .08em; margin-right: 13px; white-space: nowrap; }
+.map-key i { display: inline-block; width: 7px; height: 7px; border-radius: 2px; margin-right: 5px; }
+.stone-key { background: #6e7b86; }.hard-key { background: #8d758e; }.element-key { background: #51a3a0; }
+.mine-button, .small-button { border: 0; border-radius: 8px; background: #edc483; color: #1c2929; font-weight: 800; }
+.mine-button { padding: 12px 16px; font-size: 10px; letter-spacing: .08em; white-space: nowrap; }
+.mine-button:disabled, .small-button:disabled { opacity: .4; }
+.progress-track, .support-progress { position: relative; height: 3px; background: #263a42; }
+.progress-track div, .support-progress div { height: 100%; background: #e7bc7a; transition: width .2s; }
+#boundary-marker { position: absolute; top: -3px; width: 3px; height: 9px; background: #ff9b73; transform: translateX(-50%); }
+.below-map { display: flex; justify-content: space-between; gap: 16px; margin: 12px 2px 24px; color: #809698; font-size: 11px; }
+.below-map span:first-child { color: #d2bd98; }
+.support-card { display: flex; gap: 16px; padding: 20px; border: 1px solid #30434a; border-radius: 12px; background: #12222a; }
+.support-icon, .upgrade-icon { flex: 0 0 auto; display: grid; place-items: center; background: #243b40; color: #91c6b3; border-radius: 9px; }
+.support-icon { width: 45px; height: 45px; font-size: 22px; }
+.support-copy { flex: 1; }.support-copy h2 { font-size: 15px; margin-top: 5px; }.support-copy p { margin: 6px 0 12px; color: #82999a; font-size: 11px; line-height: 1.5; }
+.support-action { min-width: 80px; display: grid; justify-items: end; gap: 6px; }.support-action strong { font-size: 13px; }.support-action small { color: #82999a; font-size: 9px; }.small-button { padding: 7px 10px; font-size: 11px; }
+.sidebar { background: #112027; border: 1px solid #2a3e45; border-radius: 14px; padding: 23px; align-self: start; }
+.side-heading h2, .list-heading h2 { margin-top: 6px; font-size: 18px; color: #eff1e9; letter-spacing: -.025em; }.side-mark { font-size: 20px; color: #849a96; }
+.resources { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin: 20px 0 30px; }
+.resource { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 11px 8px; border: 1px solid #2c4047; background: #172a31; border-radius: 9px; }
+.resource-icon { font-size: 16px; }.ore { color: #e8bd7b; }.crystal { color: #a7b9ef; }.point { color: #93ceb1; }
+.resource small, .resource strong { display: block; }.resource small { color: #829899; font-size: 8px; letter-spacing: .07em; }.resource strong { color: #edf0e8; margin-top: 4px; font-size: 14px; }
+.list-heading { margin: 24px 0 12px; }.list-heading > span { color: #819a97; }
+.upgrade-hint { margin: 0 0 10px; color: #a9bcb9; font-size: 10px; line-height: 1.4; }
+.upgrades { display: grid; grid-template-columns: repeat(auto-fill, minmax(58px, 1fr)); gap: 6px; }
+.upgrade { position: relative; width: 100%; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 3px; text-align: center; border: 1px solid #30464c; border-radius: 7px; background: #172a31; color: #e8ece5; padding: 5px 3px; }
+.upgrade:hover:not(:disabled) { border-color: #e6bd80; background: #20353b; }.upgrade:disabled { opacity: .55; }.upgrade.attention { opacity: 1; border-color: #eec884; box-shadow: 0 0 0 2px #eec88433; animation: attention 1s infinite alternate; }
+@keyframes attention { to { box-shadow: 0 0 0 5px #eec88433; } }
+.upgrade-icon { width: 28px; height: 28px; font-size: 16px; }.upgrade-icon.artifact { color: #b9b7ee; background: #34374a; }
+.upgrade-copy { position: absolute; z-index: 10; top: calc(100% + 4px); right: 0; width: 210px; padding: 10px; border: 1px solid #526d70; border-radius: 7px; background: #102027; color: #eff1e9; text-align: left; opacity: 0; visibility: hidden; pointer-events: none; box-shadow: 0 5px 16px #0008; }
+.upgrade:hover, .upgrade:focus-visible { z-index: 11; }
+.upgrade:hover .upgrade-copy, .upgrade:focus-visible .upgrade-copy { opacity: 1; visibility: visible; }
+.upgrade-copy strong, .upgrade-copy small { display: block; }.upgrade-copy strong { font-size: 11px; line-height: 1.3; }.upgrade-copy b { color: #eac082; }.upgrade-copy small { color: #b5c5c2; font-size: 10px; line-height: 1.4; margin-top: 4px; }
+.price { flex: 0 0 auto; max-width: 100%; color: #e9c080; font-size: 9px; font-weight: 800; line-height: 1.2; overflow-wrap: anywhere; }
+.equipment { margin: 18px 0; }.equipment > div { display: flex; gap: 8px; margin-top: 8px; }.equipment-button { flex: 1; padding: 9px; border: 1px solid #30464c; border-radius: 8px; background: #172a31; color: #9bb0ad; font-size: 11px; }.equipment-button.active { border-color: #e7bd7e; color: #e7bd7e; }
+.equipment > .weapon-upgrades { display: grid; grid-template-columns: repeat(auto-fill, 58px); gap: 6px; }
+footer { display: flex; justify-content: space-between; margin-top: 28px; padding-top: 18px; border-top: 1px solid #2a3d43; color: #6d8585; font-size: 9px; letter-spacing: .12em; }
+@media (max-width: 950px) { .shell { padding: 0 18px 30px; }.layout { grid-template-columns: minmax(0, 1fr); }.sidebar { width: 100%; }.section-heading { align-items: start; }.live-badge { margin-top: 7px; } }
+@media (max-width: 520px) { .shell { padding-inline: 12px; }.topbar { height: 70px; }.top-actions #save-status, .live-badge { display: none; }.layout { padding-top: 22px; gap: 20px; }.sidebar { padding: 17px; }.map-top { padding: 16px 15px 6px; }.map-bottom { flex-wrap: wrap; padding: 10px 15px 15px; }.map-key { font-size: 8px; margin-right: 7px; }.below-map { flex-direction: column; gap: 5px; }.resources { gap: 4px; }.resource { padding: 8px 5px; }.resource small { font-size: 7px; } }
