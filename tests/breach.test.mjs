@@ -9,13 +9,37 @@ globalThis.localStorage = {
   removeItem: (key) => storage.delete(key),
 };
 const server = await createServer({ configFile: false, server: { middlewareMode: true }, appType: 'custom' });
-const { PreInfinityGame } = await server.ssrLoadModule('/src/game/breach.ts');
+const { PreInfinityGame, clearBreachSave } = await server.ssrLoadModule('/src/game/breach.ts');
 const { BREACH_CONFIG: C } = await server.ssrLoadModule('/src/game/breachConfig.ts');
 const { Weapons, splashMultiplier } = await server.ssrLoadModule('/src/game/weapons.ts');
 const { NearestStoneMovement } = await server.ssrLoadModule('/src/game/movement.ts');
 const { stoneNoise } = await server.ssrLoadModule('/src/game/stoneNoise.ts');
 after(() => server.close());
 beforeEach(() => storage.clear());
+
+test('сброс удаляет только сохранение прорыва и начинает новую игру', () => {
+  storage.set('probe-idle-save-v1', 'legacy');
+  const game = new PreInfinityGame();
+  Object.assign(game.state, { ore: 250, crystals: 12, auto: true, tutorial: 'done', furthestBlock: 35 });
+  game.save();
+  assert.equal(clearBreachSave(), true);
+  const fresh = new PreInfinityGame();
+  assert.equal(fresh.state.ore, 0);
+  assert.equal(fresh.state.crystals, 0);
+  assert.equal(fresh.state.tutorial, 'click');
+  assert.equal(fresh.challenge1Unlocked, false);
+  assert.equal(storage.get('probe-idle-save-v1'), 'legacy');
+});
+
+test('ошибка хранилища не выдаётся за успешный сброс', () => {
+  const remove = globalThis.localStorage.removeItem;
+  try {
+    globalThis.localStorage.removeItem = () => { throw new Error('denied'); };
+    assert.equal(clearBreachSave(), false);
+  } finally {
+    globalThis.localStorage.removeItem = remove;
+  }
+});
 
 function clearBlock(game) {
   for (const stone of [...game.currentStones()]) game.destroy(stone);
@@ -354,6 +378,7 @@ test('legacy melee and emitter upgrades migrate to individual weapons', () => {
   const legacy = JSON.parse(storage.get(key));
   delete legacy.fistLevel; delete legacy.pickLevel; delete legacy.needleLevel;
   delete legacy.needleUnlocked; delete legacy.rangedWeapon;
+  delete legacy.beamSpeedLevel;
   legacy.meleeLevel = 3; legacy.rangedLevel = 4; legacy.paused = true;
   storage.set(key, JSON.stringify(legacy));
   const state = new PreInfinityGame().state;
@@ -361,6 +386,7 @@ test('legacy melee and emitter upgrades migrate to individual weapons', () => {
   assert.equal(state.pickLevel, 3);
   assert.equal(state.rangedLevel, 4);
   assert.equal(state.rangedWeapon, 'emitter');
+  assert.equal(state.beamSpeedLevel, 0);
 });
 
 test('older saves migrate stone balance without losing damage progress', () => {
@@ -433,6 +459,30 @@ test('needle fires rapidly and laser deals continuous damage with expandable are
   game.save();
   const restored = new PreInfinityGame().state;
   assert.equal(restored.emitterAreaLevel, 1);
+});
+
+test('beam speed is purchased separately, persists, and changes travel without changing beam damage', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  Object.assign(s, { auto: true, repeatablesUnlocked: true, rangedUnlocked: true, rangedWeapon: 'emitter', ore: 100, crystals: 0, x: 0, y: 0 });
+  assert.equal(game.buy('beamSpeed'), false);
+  s.crystals = 1;
+  assert.equal(game.buy('beamSpeed'), true);
+  assert.equal(s.beamSpeedLevel, 1);
+  assert.equal(s.crystals, 0);
+  const stone = { block: 0, x: 0, y: 20, hp: 100, maxHp: 100, kind: 'stone', neighbors: 0 };
+  const slow = new Weapons(), fast = new Weapons();
+  const hit = (target, damage) => { target.hp -= damage; };
+  s.beamSpeedLevel = 0;
+  slow.laser(s, [stone], 0.5, 1, hit);
+  s.beamSpeedLevel = 1;
+  fast.laser(s, [stone], 0.5, 1, hit);
+  assert.ok(Math.abs(slow.beamPosition().y - C.beamMoveSpeed * 0.5) < 1e-8);
+  assert.ok(Math.abs(fast.beamPosition().y - C.beamMoveSpeed * (1 + C.beamSpeedPerLevel) * 0.5) < 1e-8);
+  assert.equal(stone.hp, 100);
+  s.paused = true;
+  game.save();
+  assert.equal(new PreInfinityGame().state.beamSpeedLevel, 1);
 });
 
 test('milestones and special upgrades charge crystals and preserve ordinary resources on failure', () => {
@@ -513,4 +563,50 @@ test('splash easing, travelling beam, deterministic noise and reset animation', 
   assert.equal(game.resetEffect.elapsed, elapsed);
   s.paused = false; game.advance(C.resetAnimationSeconds);
   assert.equal(game.resetEffect, null);
+});
+
+test('mineral deposits follow continuous noise across block boundaries and preserve the tutorial', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  const cells = new Map(s.stones.map(stone => [`${stone.block}:${stone.x}:${stone.y}`, stone]));
+  for (const stone of s.stones) {
+    if (stone.block < 2) assert.equal(stone.kind, 'stone');
+    if (stone.block === 2) assert.equal(stone.kind, 'hard');
+    if (stone.block < 3) continue;
+    const worldY = stone.block * s.size + s.size - 1 - stone.y;
+    const nx = (stone.x + C.mineralNoiseOffsetX) / C.mineralNoiseScale;
+    const ny = (worldY + C.mineralNoiseOffsetY) / C.mineralNoiseScale;
+    const elemental = stoneNoise(nx, ny, C.elementalMineralSeed) > C.elementalMineralThreshold;
+    const hard = stoneNoise(nx, ny, C.hardMineralSeed) > C.hardMineralThreshold;
+    assert.equal(stone.kind, elemental ? 'elemental' : hard ? 'hard' : 'stone');
+  }
+  for (const kind of ['hard', 'elemental']) {
+    const count = s.stones.filter(stone => stone.block >= 3 && stone.kind === kind).length;
+    const available = (C.blockCount - 3) * s.size ** 2;
+    assert.ok(count > available * 0.02 && count < available * 0.2);
+    let crossBoundary = 0;
+    for (let block = 3; block < C.blockCount - 1; block++) {
+      for (let x = 0; x < s.size; x++) {
+        if (cells.get(`${block}:${x}:0`)?.kind === kind && cells.get(`${block + 1}:${x}:${s.size - 1}`)?.kind === kind) crossBoundary++;
+      }
+    }
+    assert.ok(crossBoundary > 0, `${kind} deposits should span block boundaries`);
+  }
+});
+
+test('challenge 1 unlocks on arrival at block 35 and stays unlocked after reset and reload', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  Object.assign(s, { tutorial: 'done', block: 33, furthestBlock: 33, y: -0.5, boundary: null, stones: [] });
+  game.rebuildIndex();
+  assert.equal(game.challenge1Unlocked, false);
+  game.advance(0.1);
+  assert.equal(s.block, 34);
+  assert.equal(game.challenge1Unlocked, true);
+  game.fail();
+  assert.equal(s.block, 0);
+  assert.equal(game.challenge1Unlocked, true);
+  s.paused = true;
+  game.save();
+  assert.equal(new PreInfinityGame().challenge1Unlocked, true);
 });

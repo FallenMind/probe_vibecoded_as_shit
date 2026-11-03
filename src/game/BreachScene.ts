@@ -8,6 +8,10 @@ export class BreachScene extends Phaser.Scene {
   private graphics!: Phaser.GameObjects.Graphics;
   private pickSprite!: Phaser.GameObjects.Image;
   private readonly noiseCache = new Map<string, number>();
+  private previousPosition = { x: 0, y: 0, block: -1 };
+  private previousBeam: { x: number; y: number } | null = null;
+  private simulationTime = performance.now();
+  private simulationDuration = 0.1;
 
   constructor() { super('BreachScene'); }
 
@@ -17,6 +21,24 @@ export class BreachScene extends Phaser.Scene {
     this.graphics = this.add.graphics();
     this.pickSprite = this.add.image(0, 0, 'flint-pickaxe').setOrigin(0.15, 0.85).setVisible(false);
     this.input.on('pointerdown', () => breachGame.click());
+    this.resetInterpolation();
+  }
+
+  beforeSimulation(): void {
+    const s = breachGame.state;
+    this.previousPosition = { x: s.x, y: s.y, block: s.block };
+    this.previousBeam = breachGame.weapons.beamPosition();
+  }
+
+  afterSimulation(dt: number): void {
+    this.simulationDuration = Math.min(0.1, Math.max(0.001, dt));
+    this.simulationTime = performance.now();
+    if (this.previousPosition.block !== breachGame.state.block) this.resetInterpolation();
+  }
+
+  resetInterpolation(): void {
+    this.beforeSimulation();
+    this.simulationTime = performance.now();
   }
 
   update(): void {
@@ -25,6 +47,10 @@ export class BreachScene extends Phaser.Scene {
     const width = this.scale.width;
     const height = this.scale.height;
     const effect = breachGame.resetEffect;
+    const visualOffset = s.paused ? 0 : Math.min(this.simulationDuration, Math.max(0, (performance.now() - this.simulationTime) / 1000));
+    const alpha = visualOffset / this.simulationDuration;
+    const visualX = this.previousPosition.block === s.block ? this.previousPosition.x + (s.x - this.previousPosition.x) * alpha : s.x;
+    const visualY = this.previousPosition.block === s.block ? this.previousPosition.y + (s.y - this.previousPosition.y) * alpha : s.y;
     const size = effect?.size ?? s.size;
     const tile = Math.min((width - 70) / size, (height - 110) / (size + 1));
     const left = (width - tile * size) / 2;
@@ -35,7 +61,7 @@ export class BreachScene extends Phaser.Scene {
     g.clear();
     g.fillStyle(0x142736, 1);
     g.fillRect(left, top, tile * size, tile * size);
-    const progress = effect ? Math.min(1, effect.elapsed / C.resetAnimationSeconds) : 0;
+    const progress = effect ? Math.min(1, (effect.elapsed + visualOffset) / C.resetAnimationSeconds) : 0;
     const waveRadius = progress * size * 1.5;
     let stones = breachGame.currentStones();
     if (effect) {
@@ -86,8 +112,8 @@ export class BreachScene extends Phaser.Scene {
 
     // Силуэт человека в тяжёлом механизированном снаряжении, вид сверху.
     const ease = 1 - (1 - progress) ** 3;
-    const cx = px(effect ? effect.x + (s.x - effect.x) * ease : s.x);
-    const cy = py(effect ? effect.y + (s.y - effect.y) * ease - Math.sin(progress * Math.PI) * 1.5 : s.y);
+    const cx = px(effect ? effect.x + (s.x - effect.x) * ease : visualX);
+    const cy = py(effect ? effect.y + (s.y - effect.y) * ease - Math.sin(progress * Math.PI) * 1.5 : visualY);
     const unit = Math.max(3, tile * 0.18);
     g.fillStyle(0x07121a, 0.55);
     g.fillEllipse(cx, cy + unit * 2, unit * 5.5, unit * 2);
@@ -113,10 +139,10 @@ export class BreachScene extends Phaser.Scene {
       g.fillStyle(0xf8efe0, Math.max(0, 0.18 * (1 - progress * 4)));
       g.fillRect(left, top, tile * size, tile * size);
     } else {
-      breachGame.weapons.draw(g, s, tile, px, py, this.pickSprite);
+      breachGame.weapons.draw(g, s, tile, px, py, this.pickSprite, { x: visualX, y: visualY, alpha, previousBeam: this.previousBeam, offset: visualOffset });
       for (const shot of s.projectiles) {
         if (shot.block !== s.block) continue;
-        const t = Math.max(0, Math.min(1, 1 - shot.remaining / shot.duration));
+        const t = Math.max(0, Math.min(1, 1 - (shot.remaining - visualOffset) / shot.duration));
         const x = px(shot.fromX + (shot.x - shot.fromX) * t);
         const y = py(shot.fromY + (shot.y - shot.fromY) * t);
         g.fillStyle(0xf9d997, 0.95);

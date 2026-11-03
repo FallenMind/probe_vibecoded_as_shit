@@ -8,6 +8,7 @@ export function createGame(parent: string): Phaser.Game {
     width: 620,
     height: 640,
     backgroundColor: '#09131d',
+    fps: { limit: 0, forceSetTimeOut: false },
     scene: [BreachScene],
     scale: {
       mode: Phaser.Scale.FIT,

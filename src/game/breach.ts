@@ -2,12 +2,18 @@ import { BREACH_CONFIG as C } from './breachConfig';
 import type { BreachState, RangedWeaponId, Stone, StoneKind, WeaponId } from './breachTypes';
 import { NearestStoneMovement } from './movement';
 import { Weapons } from './weapons';
+import { stoneNoise } from './stoneNoise';
 
 const SAVE_KEY = 'pioneer-breach-v1';
-type Upgrade = 'pick' | 'auto' | 'penetration' | 'melee' | 'pickDamage' | 'rangedDamage' | 'needleDamage' | 'fistFinisher' | 'pickReach' | 'needlePierce' | 'emitterSpread' | 'emitterArea' | 'click' | 'speed' | 'movement' | 'ranged' | 'needle' | 'needleAlt' | 'artifact' | 'expansion';
+
+/** Удаляет только сохранение текущего прототипа. */
+export function clearBreachSave(): boolean {
+  try { localStorage.removeItem(SAVE_KEY); return true; } catch { return false; }
+}
+type Upgrade = 'pick' | 'auto' | 'penetration' | 'melee' | 'pickDamage' | 'rangedDamage' | 'needleDamage' | 'fistFinisher' | 'pickReach' | 'needlePierce' | 'emitterSpread' | 'emitterArea' | 'beamSpeed' | 'click' | 'speed' | 'movement' | 'ranged' | 'needle' | 'needleAlt' | 'artifact' | 'expansion';
 
 export function specialCrystalCost(upgrade: string, level: number): number {
-  return ['fistFinisher', 'pickReach', 'needlePierce', 'emitterSpread', 'emitterArea'].includes(upgrade) ? 1 + Math.floor(level / 2) : 0;
+  return ['fistFinisher', 'pickReach', 'needlePierce', 'emitterSpread', 'emitterArea', 'beamSpeed'].includes(upgrade) ? 1 + Math.floor(level / 2) : 0;
 }
 
 function stoneMaxHp(kind: StoneKind, block: number): number {
@@ -20,7 +26,7 @@ function freshState(): BreachState {
     stones: [], x: Math.floor(C.blockSize / 2), y: C.blockSize, target: null, shot: null,
     ore: 0, crystals: 0, breakthrough: 0, completions: 0, expansion: 0, auto: false, pickUnlocked: false, repeatablesUnlocked: false, attackClock: 0, penetration: 0,
     meleeLevel: 0, fistLevel: 0, pickLevel: 0, rangedLevel: 0, needleLevel: 0, rangedWeapon: 'needle', needleUnlocked: false,
-    fistFinisherLevel: 0, pickReachLevel: 0, needlePierceLevel: 0, emitterSpreadLevel: 0, emitterAreaLevel: 0,
+    fistFinisherLevel: 0, pickReachLevel: 0, needlePierceLevel: 0, emitterSpreadLevel: 0, emitterAreaLevel: 0, beamSpeedLevel: 0,
     clickLevel: 0, speedLevel: 0, movementLevel: 0, weapon: 'fists', rangedUnlocked: false,
     artifactUnlocked: false, artifactClock: 0, rangedClock: 0, boundary: null, reagent: 0, reagentClock: 0,
     needleAltUnlocked: false, needleAltClock: 0, projectiles: [], charges: 0, buffRemaining: 0, message: '',
@@ -66,6 +72,7 @@ export class PreInfinityGame {
       saved.needlePierceLevel ??= 0;
       saved.emitterSpreadLevel ??= 0;
       saved.emitterAreaLevel ??= 0;
+      saved.beamSpeedLevel ??= 0;
       saved.movementLevel ??= 0;
       saved.needleAltUnlocked ??= false;
       saved.needleAltClock ??= 0;
@@ -115,6 +122,8 @@ export class PreInfinityGame {
 
   currentStones(): readonly Stone[] { return this.blocks[this.state.block] ?? []; }
 
+  get challenge1Unlocked(): boolean { return this.state.furthestBlock >= C.challenge1UnlockBlock; }
+
   private createMap(): void {
     const s = this.state;
     s.size = C.blockSize + s.expansion;
@@ -125,12 +134,19 @@ export class PreInfinityGame {
     s.shot = null;
     s.projectiles = [];
     s.stones = [];
-    for (let block = 0; block < C.blockCount; block++) {
-      for (let y = 0; y < s.size; y++) for (let x = 0; x < s.size; x++) {
+    // Все квадраты — одна непрерывная прямоугольная карта в мировых координатах.
+    for (let worldY = 0; worldY < C.blockCount * s.size; worldY++) {
+      const block = Math.floor(worldY / s.size);
+      const y = s.size - 1 - (worldY % s.size);
+      for (let x = 0; x < s.size; x++) {
         let kind: StoneKind = 'stone';
         if (s.tutorial !== 'done' && block === 2) kind = 'hard';
-        else if (block >= 3 && (block * 17 + x * 7 + y * 11) % 23 === 0) kind = 'elemental';
-        else if (block >= 2 && (block * 13 + x * 5 + y * 3) % 19 === 0) kind = 'hard';
+        else {
+          const nx = (x + C.mineralNoiseOffsetX) / C.mineralNoiseScale;
+          const ny = (worldY + C.mineralNoiseOffsetY) / C.mineralNoiseScale;
+          if (block >= C.elementalMineralStartBlock && stoneNoise(nx, ny, C.elementalMineralSeed) > C.elementalMineralThreshold) kind = 'elemental';
+          else if (block >= C.hardMineralStartBlock && stoneNoise(nx, ny, C.hardMineralSeed) > C.hardMineralThreshold) kind = 'hard';
+        }
         const hp = stoneMaxHp(kind, block);
         s.stones.push({ block, x, y, hp, maxHp: hp, kind, neighbors: 0 });
       }
@@ -380,7 +396,7 @@ export class PreInfinityGame {
       s.crystals -= C.costs.needleAlt; s.needleAltUnlocked = true; return true;
     }
     if (!s.repeatablesUnlocked) return false;
-    const level = upgrade === 'melee' ? s.fistLevel : upgrade === 'pickDamage' ? s.pickLevel : upgrade === 'rangedDamage' ? s.rangedLevel : upgrade === 'needleDamage' ? s.needleLevel : upgrade === 'fistFinisher' ? s.fistFinisherLevel : upgrade === 'pickReach' ? s.pickReachLevel : upgrade === 'needlePierce' ? s.needlePierceLevel : upgrade === 'emitterSpread' ? s.emitterSpreadLevel : upgrade === 'emitterArea' ? s.emitterAreaLevel : upgrade === 'movement' ? s.movementLevel : upgrade === 'click' ? s.clickLevel : s.speedLevel;
+    const level = upgrade === 'melee' ? s.fistLevel : upgrade === 'pickDamage' ? s.pickLevel : upgrade === 'rangedDamage' ? s.rangedLevel : upgrade === 'needleDamage' ? s.needleLevel : upgrade === 'fistFinisher' ? s.fistFinisherLevel : upgrade === 'pickReach' ? s.pickReachLevel : upgrade === 'needlePierce' ? s.needlePierceLevel : upgrade === 'emitterSpread' ? s.emitterSpreadLevel : upgrade === 'emitterArea' ? s.emitterAreaLevel : upgrade === 'beamSpeed' ? s.beamSpeedLevel : upgrade === 'movement' ? s.movementLevel : upgrade === 'click' ? s.clickLevel : s.speedLevel;
     if (upgrade === 'pickDamage' && !s.pickUnlocked) return false;
     if (upgrade === 'pickReach' && !s.pickUnlocked) return false;
     if (upgrade === 'rangedDamage' && !s.rangedUnlocked) return false;
@@ -388,6 +404,7 @@ export class PreInfinityGame {
     if (upgrade === 'needlePierce' && (!s.needleUnlocked || level >= C.needlePierceMaxLevel)) return false;
     if (upgrade === 'emitterSpread' && (!s.rangedUnlocked || level >= C.emitterSpreadMaxLevel)) return false;
     if (upgrade === 'emitterArea' && (!s.rangedUnlocked || level >= C.emitterAreaMaxLevel)) return false;
+    if (upgrade === 'beamSpeed' && !s.rangedUnlocked) return false;
     const cost = Math.ceil(8 * 1.55 ** level);
     const crystals = specialCrystalCost(upgrade, level);
     if (s.ore < cost || s.crystals < crystals) return false;
@@ -401,6 +418,7 @@ export class PreInfinityGame {
     else if (upgrade === 'needlePierce') s.needlePierceLevel++;
     else if (upgrade === 'emitterSpread') s.emitterSpreadLevel++;
     else if (upgrade === 'emitterArea') s.emitterAreaLevel++;
+    else if (upgrade === 'beamSpeed') s.beamSpeedLevel++;
     else if (upgrade === 'movement') s.movementLevel++;
     else if (upgrade === 'click') s.clickLevel++;
     else s.speedLevel++;

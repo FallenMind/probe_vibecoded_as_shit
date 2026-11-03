@@ -1,14 +1,15 @@
 import './breach.css';
 import { createGame } from './game/config';
-import { breachGame, specialCrystalCost } from './game/breach';
+import { breachGame, clearBreachSave, specialCrystalCost } from './game/breach';
 import { BREACH_CONFIG as C } from './game/breachConfig';
+import { BreachScene } from './game/BreachScene';
 
 const app = document.getElementById('app') as HTMLElement;
 app.innerHTML = `
   <div class="shell">
     <header class="topbar">
       <div class="brand"><span class="brand-icon">✳</span><div><strong>ПИОНЕР</strong><small>ПРОТОКОЛ ПРОРЫВА</small></div></div>
-      <div class="top-actions"><span id="save-status">СОХРАНЕНО</span><button id="pause" class="icon-button" aria-label="Пауза" title="Пауза: P или Escape">Ⅱ</button></div>
+      <div class="top-actions"><span id="save-status">СОХРАНЕНО</span><button id="reset-progress" class="reset-button" title="Начать игру заново">Сбросить прогресс</button><button id="pause" class="icon-button" aria-label="Пауза" title="Пауза: P или Escape">Ⅱ</button></div>
     </header>
     <div class="layout">
       <main class="main-column">
@@ -59,10 +60,14 @@ app.innerHTML = `
             <button class="upgrade" data-weapon="emitter" data-upgrade="rangedDamage"><span class="upgrade-icon">⌁</span><span class="upgrade-copy"><strong>Мощность излучателя <b></b></strong><small>Увеличивает урон излучателя.</small></span><span class="price"></span></button>
             <button class="upgrade" data-weapon="emitter" data-upgrade="emitterSpread"><span class="upgrade-icon">✣</span><span class="upgrade-copy"><strong>Рассеивание <b></b></strong><small>Усиливает урон по краям луча; урон плавно уменьшается с расстоянием.</small></span><span class="price"></span></button>
             <button class="upgrade" data-weapon="emitter" data-upgrade="emitterArea"><span class="upgrade-icon">◎</span><span class="upgrade-copy"><strong>Ширина луча <b></b></strong><small>Расширяет область лазера на одну клетку за уровень.</small></span><span class="price"></span></button>
+            <button class="upgrade" data-weapon="emitter" data-upgrade="beamSpeed"><span class="upgrade-icon">➟</span><span class="upgrade-copy"><strong>Скорость луча <b></b></strong><small>Луч перемещается между целями на 25% быстрее за уровень.</small></span><span class="price"></span></button>
           </div></section>
         <div class="list-heading advanced hidden"><div><span class="eyebrow">НЕИЗВЕСТНЫЕ ТЕХНОЛОГИИ</span><h2>Артефакт</h2></div><span>✧</span></div>
         <div class="upgrades advanced hidden"><button class="upgrade" data-upgrade="artifact"><span class="upgrade-icon artifact">✺</span><span class="upgrade-copy"><strong>Эхо пустоты</strong><small>С 25-го квадрата: наносит урон в текущем и соседних квадратах, больше — изолированным камням.</small></span><span class="price"></span></button>
         <button class="upgrade" data-upgrade="expansion"><span class="upgrade-icon">▦</span><span class="upgrade-copy"><strong>Расширить блок <b></b></strong><small>Больше камней в каждом квадрате со следующей попытки.</small></span><span class="price"></span></button></div>
+        <section class="challenge-section"><div class="list-heading"><div><span class="eyebrow">РЕЖИМЫ</span><h2>Испытания</h2></div><span>◇</span></div>
+          <div id="challenge-1" class="challenge-card" aria-live="polite"><strong>Challenge 1</strong><span id="challenge-1-status"></span></div>
+        </section>
         <footer>ПИОНЕР / PRE-INFINITY <span>✳</span></footer>
       </aside>
     </div>
@@ -74,6 +79,7 @@ const s = breachGame.state;
 const game = createGame('game');
 let lastTick = performance.now();
 let saveTime = 0;
+let resetRequested = false;
 
 function setUpgrade(name: string, price: string, disabled: boolean, level?: number): void {
   const button = upgrade(name);
@@ -93,6 +99,9 @@ function render(): void {
   $('#ore').textContent = String(Math.floor(s.ore));
   $('#crystals').textContent = String(s.crystals);
   $('#points').textContent = String(s.breakthrough);
+  const challengeStatus = breachGame.challenge1Unlocked ? 'Открыто · скоро' : 'Откроется на 35-м квадрате';
+  if ($('#challenge-1-status').textContent !== challengeStatus) $('#challenge-1-status').textContent = challengeStatus;
+  $('#challenge-1').classList.toggle('unlocked', breachGame.challenge1Unlocked);
   $('#progress-fill').style.width = `${Math.min(100, s.block / C.blockCount * 100)}%`;
   $('#boundary-marker').classList.toggle('hidden', s.boundary === null);
   if (s.boundary !== null) $('#boundary-marker').style.left = `${Math.max(0, Math.min(100, s.boundary / (C.blockCount * s.size) * 100))}%`;
@@ -117,10 +126,10 @@ function render(): void {
   setUpgrade('penetration', s.penetration ? '✓' : `${C.costs.penetration} ◆`, !!s.penetration || !s.auto || s.ore < C.costs.penetration);
   upgrade('auto').classList.toggle('attention', s.tutorial === 'auto');
   upgrade('penetration').classList.toggle('attention', s.tutorial === 'penetration');
-  for (const [name, level] of [['melee', s.fistLevel], ['pickDamage', s.pickLevel], ['click', s.clickLevel], ['speed', s.speedLevel], ['movement', s.movementLevel], ['rangedDamage', s.rangedLevel], ['needleDamage', s.needleLevel], ['fistFinisher', s.fistFinisherLevel], ['pickReach', s.pickReachLevel], ['needlePierce', s.needlePierceLevel], ['emitterSpread', s.emitterSpreadLevel], ['emitterArea', s.emitterAreaLevel]] as const) {
+  for (const [name, level] of [['melee', s.fistLevel], ['pickDamage', s.pickLevel], ['click', s.clickLevel], ['speed', s.speedLevel], ['movement', s.movementLevel], ['rangedDamage', s.rangedLevel], ['needleDamage', s.needleLevel], ['fistFinisher', s.fistFinisherLevel], ['pickReach', s.pickReachLevel], ['needlePierce', s.needlePierceLevel], ['emitterSpread', s.emitterSpreadLevel], ['emitterArea', s.emitterAreaLevel], ['beamSpeed', s.beamSpeedLevel]] as const) {
     const cost = Math.ceil(8 * 1.55 ** level);
     const crystals = specialCrystalCost(name, level);
-    setUpgrade(name, `${cost} ◆${crystals ? ` + ${crystals} ✦` : ''}`, !s.repeatablesUnlocked || s.ore < cost || s.crystals < crystals || ((name === 'pickDamage' || name === 'pickReach') && !s.pickUnlocked) || ((name === 'rangedDamage' || name === 'emitterSpread' || name === 'emitterArea') && !s.rangedUnlocked) || ((name === 'needleDamage' || name === 'needlePierce') && !s.needleUnlocked) || (name === 'needlePierce' && level >= C.needlePierceMaxLevel) || (name === 'emitterSpread' && level >= C.emitterSpreadMaxLevel) || (name === 'emitterArea' && level >= C.emitterAreaMaxLevel), level);
+    setUpgrade(name, `${cost} ◆${crystals ? ` + ${crystals} ✦` : ''}`, !s.repeatablesUnlocked || s.ore < cost || s.crystals < crystals || ((name === 'pickDamage' || name === 'pickReach') && !s.pickUnlocked) || ((name === 'rangedDamage' || name === 'emitterSpread' || name === 'emitterArea' || name === 'beamSpeed') && !s.rangedUnlocked) || ((name === 'needleDamage' || name === 'needlePierce') && !s.needleUnlocked) || (name === 'needlePierce' && level >= C.needlePierceMaxLevel) || (name === 'emitterSpread' && level >= C.emitterSpreadMaxLevel) || (name === 'emitterArea' && level >= C.emitterAreaMaxLevel), level);
   }
   setUpgrade('ranged', s.rangedUnlocked ? '✓' : `${C.costs.ranged} ◆`, !s.needleUnlocked || s.rangedUnlocked || s.ore < C.costs.ranged);
   setUpgrade('needle', s.needleUnlocked ? '✓' : `${C.costs.needle} ◆`, !s.auto || s.needleUnlocked || s.ore < C.costs.needle);
@@ -164,25 +173,38 @@ function togglePause(): void {
   s.paused = !s.paused;
   lastTick = performance.now();
   if (s.paused) { if (game.scene.isActive('BreachScene')) game.scene.pause('BreachScene'); }
-  else if (game.scene.isPaused('BreachScene')) game.scene.resume('BreachScene');
+  else if (game.scene.isPaused('BreachScene')) { (game.scene.getScene('BreachScene') as BreachScene).resetInterpolation(); game.scene.resume('BreachScene'); }
   breachGame.save();
   render();
 }
 $('#pause').addEventListener('click', togglePause);
+$('#reset-progress').addEventListener('click', () => {
+  if (!window.confirm('Сбросить весь прогресс этой игры? Улучшения, ресурсы и достижения будут удалены.')) return;
+  if (!clearBreachSave()) {
+    window.alert('Не удалось удалить сохранение. Проверьте доступ к хранилищу браузера.');
+    return;
+  }
+  resetRequested = true;
+  window.clearInterval(interval);
+  window.location.reload();
+});
 function onKey(event: KeyboardEvent): void {
   if (event.code !== 'KeyP' && event.code !== 'Escape') return;
   event.preventDefault();
   if (!event.repeat) togglePause();
 }
 window.addEventListener('keydown', onKey);
-const onPageHide = () => breachGame.save();
+const onPageHide = () => { if (!resetRequested) breachGame.save(); };
 window.addEventListener('pagehide', onPageHide);
 const interval = window.setInterval(() => {
   const now = performance.now();
   const dt = (now - lastTick) / 1000;
   lastTick = now;
   if (!s.paused) {
+    const scene = game.scene.isActive('BreachScene') ? game.scene.getScene('BreachScene') as BreachScene : null;
+    scene?.beforeSimulation();
     breachGame.advance(dt);
+    scene?.afterSimulation(dt);
     saveTime += dt;
     if (saveTime >= C.saveIntervalSeconds) { breachGame.save(); saveTime = 0; }
   }

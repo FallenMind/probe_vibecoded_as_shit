@@ -52,6 +52,7 @@ export interface BreachState {
   needlePierceLevel: number;
   emitterSpreadLevel: number;
   emitterAreaLevel: number;
+  beamSpeedLevel: number;
   rangedWeapon: RangedWeaponId;
   needleUnlocked: boolean;
   needleAltUnlocked: boolean;

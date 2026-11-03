@@ -14,6 +14,7 @@ export function splashMultiplier(distance: number, radius: number, spreadLevel: 
 export class Weapons {
   private animations: { weapon: WeaponId; angle: number; x: number; y: number; remaining: number }[] = [];
   private beam: { x: number; y: number } | null = null;
+  beamPosition(): { x: number; y: number } | null { return this.beam ? { ...this.beam } : null; }
   canHit(state: BreachState, stone: Stone): boolean { return stone.kind !== 'hard' || state.penetration > 0; }
   advanceAnimation(dt: number): void {
     for (const effect of this.animations) effect.remaining -= dt;
@@ -74,7 +75,7 @@ export class Weapons {
     if (!this.beam) this.beam = { x: state.x, y: state.y };
     const dx = target.x - this.beam.x, dy = target.y - this.beam.y;
     const distance = Math.hypot(dx, dy);
-    const travel = Math.min(distance, C.beamMoveSpeed * dt);
+    const travel = Math.min(distance, C.beamMoveSpeed * (1 + state.beamSpeedLevel * C.beamSpeedPerLevel) * dt);
     if (distance > 0) { this.beam.x += dx / distance * travel; this.beam.y += dy / distance * travel; }
     const damage = (C.rangedDamage + state.rangedLevel * C.rangedDamagePerLevel) * dt * speed;
     const radius = C.rangedBlastRadius + state.emitterAreaLevel;
@@ -128,10 +129,12 @@ export class Weapons {
       }
     }
   }
-  draw(g: Phaser.GameObjects.Graphics, state: BreachState, tile: number, px: (x: number) => number, py: (y: number) => number, pickSprite: Phaser.GameObjects.Image): void {
-    const x = px(state.x), y = py(state.y);
+  draw(g: Phaser.GameObjects.Graphics, state: BreachState, tile: number, px: (x: number) => number, py: (y: number) => number, pickSprite: Phaser.GameObjects.Image, visual: { x: number; y: number; alpha: number; previousBeam: { x: number; y: number } | null; offset: number }): void {
+    const x = px(visual.x), y = py(visual.y);
     if (this.beam && state.rangedWeapon === 'emitter') {
-      const bx = px(this.beam.x), by = py(this.beam.y);
+      const from = visual.previousBeam ?? this.beam;
+      const bx = px(from.x + (this.beam.x - from.x) * visual.alpha);
+      const by = py(from.y + (this.beam.y - from.y) * visual.alpha);
       g.lineStyle(Math.max(5, tile * 0.38), 0x39c8d1, 0.25);
       g.lineBetween(x, y, bx, by);
       g.lineStyle(Math.max(2, tile * 0.13), 0xb9ffff, 0.95);
@@ -140,9 +143,9 @@ export class Weapons {
       g.fillCircle(bx, by, tile * (C.rangedBlastRadius + state.emitterAreaLevel + 0.4));
     }
     const pickEffect = this.animations.find(effect => effect.weapon === 'pick');
-    let pickAngle = state.target ? Math.atan2(state.target.y - state.y, state.target.x - state.x) : -Math.PI / 2;
+    let pickAngle = state.target ? Math.atan2(state.target.y - visual.y, state.target.x - visual.x) : -Math.PI / 2;
     if (pickEffect) {
-      const progress = 1 - pickEffect.remaining / C.animationSeconds;
+      const progress = Math.max(0, Math.min(1, 1 - (pickEffect.remaining - visual.offset) / C.animationSeconds));
       const sweep = C.pickArcDegrees * Math.PI / 180;
       pickAngle = pickEffect.angle - sweep / 2 + sweep * progress;
     }
@@ -150,7 +153,7 @@ export class Weapons {
     if (state.weapon === 'pick') pickSprite.setPosition(x, y).setDisplaySize(tile * 2.4, tile * 2.4).setRotation(pickAngle + Math.PI / 4);
     for (const effect of this.animations) {
     if (effect.weapon !== 'ranged' && effect.weapon !== state.weapon) continue;
-    const progress = 1 - effect.remaining / C.animationSeconds;
+    const progress = Math.max(0, Math.min(1, 1 - (effect.remaining - visual.offset) / C.animationSeconds));
     if (effect.weapon === 'ranged') {
       g.lineStyle(Math.max(2, tile * 0.15), 0x8fe2df, 1 - progress);
       g.lineBetween(x, y, px(effect.x), py(effect.y));

@@ -12,6 +12,8 @@ button:disabled { cursor: default; }
 .brand small { margin-top: 3px; color: #779096; font-size: 9px; }
 .top-actions { display: flex; align-items: center; gap: 18px; color: #7b9295; font-size: 10px; letter-spacing: .12em; }
 .icon-button { width: 38px; height: 38px; border: 1px solid #344b52; background: #14242c; color: #e3ebea; border-radius: 9px; }
+.reset-button { min-height: 38px; padding: 0 10px; border: 1px solid #654a43; border-radius: 9px; background: #291f20; color: #e5c1b1; font-size: 10px; }
+.reset-button:hover, .reset-button:focus-visible { border-color: #d99880; color: #fff1e8; }
 .layout { display: grid; grid-template-columns: minmax(0, 1fr) 390px; gap: 28px; padding-top: 32px; }
 .main-column { min-width: 0; }
 .section-heading, .side-heading, .list-heading { display: flex; justify-content: space-between; align-items: end; gap: 10px; }
@@ -72,6 +74,9 @@ h1 { margin-top: 8px; color: #f4f2e9; font-size: clamp(23px, 2.3vw, 34px); lette
 .price { flex: 0 0 auto; max-width: 100%; color: #e9c080; font-size: 9px; font-weight: 800; line-height: 1.2; overflow-wrap: anywhere; }
 .equipment { margin: 18px 0; }.equipment > div { display: flex; gap: 8px; margin-top: 8px; }.equipment-button { flex: 1; padding: 9px; border: 1px solid #30464c; border-radius: 8px; background: #172a31; color: #9bb0ad; font-size: 11px; }.equipment-button.active { border-color: #e7bd7e; color: #e7bd7e; }
 .equipment > .weapon-upgrades { display: grid; grid-template-columns: repeat(auto-fill, 58px); gap: 6px; }
+.challenge-card { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 10px 12px; border: 1px solid #30464c; border-radius: 8px; background: #172a31; color: #9caeac; font-size: 11px; }
+.challenge-card span { color: #82999a; font-size: 10px; text-align: right; }
+.challenge-card.unlocked { border-color: #b89a68; color: #f0d2a1; }
 footer { display: flex; justify-content: space-between; margin-top: 28px; padding-top: 18px; border-top: 1px solid #2a3d43; color: #6d8585; font-size: 9px; letter-spacing: .12em; }
 @media (max-width: 950px) { .shell { padding: 0 18px 30px; }.layout { grid-template-columns: minmax(0, 1fr); }.sidebar { width: 100%; }.section-heading { align-items: start; }.live-badge { margin-top: 7px; } }
 @media (max-width: 520px) { .shell { padding-inline: 12px; }.topbar { height: 70px; }.top-actions #save-status, .live-badge { display: none; }.layout { padding-top: 22px; gap: 20px; }.sidebar { padding: 17px; }.map-top { padding: 16px 15px 6px; }.map-bottom { flex-wrap: wrap; padding: 10px 15px 15px; }.map-key { font-size: 8px; margin-right: 7px; }.below-map { flex-direction: column; gap: 5px; }.resources { gap: 4px; }.resource { padding: 8px 5px; }.resource small { font-size: 7px; } }
