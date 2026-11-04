@@ -19,7 +19,9 @@ export class NearestStoneMovement {
     const dy = y - state.y;
     const distance = Math.hypot(dx, dy);
     if (!distance) return;
-    const step = Math.min(distance, BREACH_CONFIG.movementSpeed * (1 + state.movementLevel * BREACH_CONFIG.movementSpeedPerLevel) * dt);
+    const fraction = state.clickBuffer / BREACH_CONFIG.clickBufferCapacity;
+    const clickBoost = fraction > 0.1 ? 1 + BREACH_CONFIG.clickMovementMaxBonus * Math.min(1, (fraction - 0.1) / 0.4) : 1;
+    const step = Math.min(distance, BREACH_CONFIG.movementSpeed * (1 + state.movementLevel * BREACH_CONFIG.movementSpeedPerLevel) * clickBoost * (state.pickDash && state.weapon === 'pick' ? 5 : 1) * dt);
     state.x += dx / distance * step;
     state.y += dy / distance * step;
   }

@@ -14,6 +14,7 @@ const { BREACH_CONFIG: C } = await server.ssrLoadModule('/src/game/breachConfig.
 const { Weapons, splashMultiplier } = await server.ssrLoadModule('/src/game/weapons.ts');
 const { NearestStoneMovement } = await server.ssrLoadModule('/src/game/movement.ts');
 const { stoneNoise } = await server.ssrLoadModule('/src/game/stoneNoise.ts');
+const { ALCHEMY_CONFIG: A, ALCHEMY_UPGRADES, alchemyCapacity } = await server.ssrLoadModule('/src/game/alchemy.ts');
 after(() => server.close());
 beforeEach(() => storage.clear());
 
@@ -102,11 +103,13 @@ test('автоматическая добыча самостоятельно п�
   game.click(); game.click(); game.click();
   assert.equal(game.buy('auto'), true);
   s.ore = C.costs.pick;
-  assert.equal(game.buy('pick'), true);
-  for (let i = 0; i < 1200 && s.tutorial !== 'penetration'; i++) game.advance(1);
+  assert.equal(game.buy('pick'), false);
+  for (let i = 0; i < 3000 && s.tutorial !== 'penetration'; i++) game.advance(1);
   assert.equal(s.block, 2);
   assert.equal(s.tutorial, 'penetration');
   assert.equal(s.boundary, null);
+  s.ore = C.costs.pick + C.costs.penetration;
+  assert.equal(game.buy('pick'), true);
   assert.equal(game.buy('penetration'), true);
   for (let i = 0; i < 1200 && s.tutorial !== 'done'; i++) game.advance(1);
   assert.equal(s.block, 3);
@@ -187,13 +190,13 @@ test('артефакт учитывает соседей через границ
   assert.equal(b.neighbors, 0);
 });
 
-test('реагент собирается в заряд и автоматически усиливает элементальную руду', () => {
+test('старые заряды не усиливают элементальную породу после перехода на алхимию', () => {
   const game = new PreInfinityGame();
   finishTutorial(game);
   const s = game.state;
   s.auto = false;
   game.advance(C.reagentInterval);
-  assert.equal(s.reagent, 1);
+  assert.equal(s.reagent, 0);
   const stone = s.stones.find((item) => item.block === s.block && item.kind === 'stone');
   stone.kind = 'elemental';
   stone.hp = 10;
@@ -201,12 +204,10 @@ test('реагент собирается в заряд и автоматиче�
   s.y = stone.y;
   game.click();
   assert.ok(Math.abs(stone.hp - 9.8) < 1e-8);
-  game.collect();
-  assert.equal(s.charges, 1);
+  s.charges = 1;
   game.click();
-  assert.ok(Math.abs(stone.hp - 8.8) < 1e-8);
-  assert.equal(s.charges, 0);
-  assert.equal(s.buffRemaining, C.elementalBuffSeconds);
+  assert.ok(Math.abs(stone.hp - 9.6) < 1e-8);
+  assert.equal(s.charges, 1);
 });
 
 test('прохождение выдаёт очко, а расширение применяется в следующей попытке', () => {
@@ -215,6 +216,7 @@ test('прохождение выдаёт очко, а расширение пр
   const s = game.state;
   s.block = C.blockCount - 1;
   s.stones = [];
+  game.rebuildIndex();
   game.rebuildIndex();
   s.y = -0.5;
   s.ore = 30;
@@ -287,7 +289,7 @@ test('collector unlocks weapons early; repeatables unlock at 30% of a map and pe
   game.click(); game.click(); game.click();
   assert.equal(game.buy('auto'), true);
   assert.equal(game.buy('melee'), false);
-  assert.equal(game.buy('pick'), true);
+  assert.equal(game.buy('pick'), false);
   assert.equal(game.buy('ranged'), false);
   assert.equal(game.buy('needle'), true);
   assert.equal(s.rangedWeapon, 'needle');
@@ -336,7 +338,7 @@ test('emitter searches around rear stone independently of player and maximizes d
 test('weapon upgrades are independent and ranged weapons switch without affecting melee', () => {
   const game = new PreInfinityGame();
   const s = game.state;
-  Object.assign(s, { auto: true, repeatablesUnlocked: true, pickUnlocked: true, rangedUnlocked: true, ore: 1000 });
+  Object.assign(s, { auto: true, repeatablesUnlocked: true, pickUnlocked: true, rangedUnlocked: true, ore: 10000 });
   assert.equal(game.buy('needle'), true);
   for (const upgrade of ['melee', 'pickDamage', 'rangedDamage', 'needleDamage']) assert.equal(game.buy(upgrade), true);
   assert.deepEqual([s.fistLevel, s.pickLevel, s.rangedLevel, s.needleLevel], [1, 1, 1, 1]);
@@ -356,7 +358,7 @@ test('weapon upgrades are independent and ranged weapons switch without affectin
 test('unique weapon upgrades change their own attacks and survive save and reload', () => {
   const game = new PreInfinityGame();
   const s = game.state;
-  Object.assign(s, { auto: true, repeatablesUnlocked: true, pickUnlocked: true, needleUnlocked: true, rangedUnlocked: true, ore: 1000, crystals: 100, x: 5, y: 5 });
+  Object.assign(s, { auto: true, repeatablesUnlocked: true, pickUnlocked: true, needleUnlocked: true, rangedUnlocked: true, ore: 10000, crystals: 100, x: 5, y: 5 });
   for (const upgrade of ['fistFinisher', 'pickReach', 'needlePierce', 'emitterSpread']) assert.equal(game.buy(upgrade), true);
   const weapons = new Weapons();
   const stone = (x, y, hp = 100, maxHp = 100) => ({ block: 0, x, y, hp, maxHp, kind: 'stone', neighbors: 0 });
@@ -415,7 +417,7 @@ test('older saves migrate stone balance without losing damage progress', () => {
   storage.set(key, JSON.stringify(legacy));
   const restored = new PreInfinityGame().state;
   const same = restored.stones.find(item => item.block === stone.block && item.x === stone.x && item.y === stone.y);
-  assert.equal(same.maxHp, 3 + Math.floor(10 * C.stoneHpPerBlock));
+  assert.equal(same.maxHp, 3 + 3 * C.stoneHpEarlyPerLevel + 7 * C.stoneHpLatePerLevel);
   assert.equal(same.hp / same.maxHp, 0.5);
 });
 
@@ -431,7 +433,7 @@ test('old equipped emitter save restores melee and keeps ranged weapon', () => {
 test('movement upgrade, pick interaction range and falloff', () => {
   const game = new PreInfinityGame();
   const s = game.state;
-  Object.assign(s, { auto: true, repeatablesUnlocked: true, pickUnlocked: true, ore: 100, crystals: 10, x: 0, y: 0 });
+  Object.assign(s, { auto: true, repeatablesUnlocked: true, pickUnlocked: true, ore: 10000, crystals: 10, x: 0, y: 0 });
   assert.equal(game.buy('movement'), true);
   new NearestStoneMovement().move(s, 20, 0, 1);
   assert.equal(s.x, C.movementSpeed * (1 + C.movementSpeedPerLevel));
@@ -501,7 +503,7 @@ test('beam speed is purchased separately, persists, and changes travel without c
 test('milestones and special upgrades charge crystals and preserve ordinary resources on failure', () => {
   const game = new PreInfinityGame();
   const s = game.state;
-  Object.assign(s, { auto: true, needleUnlocked: true, pickUnlocked: true, repeatablesUnlocked: true, ore: 1000, crystals: 30, furthestBlock: 18 });
+  Object.assign(s, { auto: true, needleUnlocked: true, pickUnlocked: true, repeatablesUnlocked: true, ore: 10000, crystals: 30, furthestBlock: 18 });
   assert.equal(game.buy('needleAlt'), false);
   assert.equal(game.buy('artifact'), false);
   s.furthestBlock = 19;
@@ -622,4 +624,364 @@ test('challenge 1 unlocks on arrival at block 35 and stays unlocked after reset 
   s.paused = true;
   game.save();
   assert.equal(new PreInfinityGame().challenge1Unlocked, true);
+});
+
+test('alchemy nodes use furthest progress and do not open unimplemented challenges', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  s.furthestBlock = A.earthUnlockBlock - 1;
+  assert.equal(game.alchemyNodeUnlocked('earth'), false);
+  assert.equal(game.toggleAlchemy('earthEnabled'), false);
+  s.furthestBlock = A.earthUnlockBlock;
+  assert.equal(game.alchemyNodeUnlocked('earth'), true);
+  assert.equal(game.alchemyNodeUnlocked('water'), false);
+  s.furthestBlock = A.waterUnlockBlock;
+  assert.equal(game.alchemyNodeUnlocked('water'), true);
+  s.furthestBlock = 49;
+  assert.equal(game.challenge1Unlocked, true);
+  assert.equal(game.alchemyNodeUnlocked('fire'), false);
+  assert.equal(game.alchemyNodeUnlocked('air'), false);
+});
+
+test('stone weights supply separate materials for earth and water', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  const makeStone = (x, kind) => ({ block: 0, x, y: 1, hp: 1, maxHp: 1, kind, neighbors: 0 });
+  const [normal, hard, elemental] = [makeStone(0, 'stone'), makeStone(1, 'hard'), makeStone(2, 'elemental')];
+  s.stones = [normal, hard, elemental]; game.rebuildIndex();
+  for (const stone of [normal, hard, elemental]) game.destroy(stone);
+  assert.equal(s.alchemy.stone, 6);
+  assert.equal(s.alchemy.elementalStone, 1);
+  game.destroy(normal);
+  assert.equal(s.alchemy.stone, 6);
+});
+
+test('alchemy runs in background with costs, limits, and pause', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  s.furthestBlock = A.waterUnlockBlock;
+  Object.assign(s.alchemy, { stone: 50, elementalStone: 100, earth: 20 });
+  assert.equal(game.toggleAlchemy('earthEnabled'), true);
+  assert.equal(game.toggleAlchemy('waterEnabled'), true);
+  game.advance(A.waterRecipe.seconds);
+  assert.equal(s.alchemy.stone, 20);
+  assert.equal(s.alchemy.earth, 45);
+  assert.equal(s.alchemy.elementalStone, 90);
+  assert.equal(s.alchemy.water, 5);
+  s.alchemy.earth = alchemyCapacity(s.alchemy, 'earth');
+  s.alchemy.waterEnabled = false;
+  const remaining = s.alchemy.stone;
+  game.advance(1);
+  assert.equal(s.alchemy.stone, remaining);
+  s.paused = true;
+  const before = structuredClone(s.alchemy);
+  game.advance(10);
+  assert.deepEqual(s.alchemy, before);
+});
+
+test('water can be exchanged repeatedly without exceeding capacity or available ingredients', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  s.furthestBlock = A.waterUnlockBlock;
+  Object.assign(s.alchemy, { earth: 100, elementalStone: 200 });
+  assert.equal(game.craftWater(), true);
+  assert.equal(game.craftWater(), true);
+  assert.equal(s.alchemy.water, 19);
+  assert.equal(s.alchemy.earth, 81);
+  assert.equal(s.alchemy.elementalStone, 162);
+  Object.assign(s.alchemy, { earth: 10, elementalStone: 20, water: alchemyCapacity(s.alchemy, 'water') });
+  assert.equal(game.craftWater(), false);
+  assert.equal(s.alchemy.earth, 10);
+});
+
+test('earth pick enhancement costs two per weighted destroyed stone only', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  Object.assign(s, { furthestBlock: A.earthUnlockBlock, pickUnlocked: true, penetration: 1, buffRemaining: 5 });
+  s.alchemy.earth = 20;
+  assert.equal(game.toggleAlchemy('pickEnabled'), true);
+  const makeStone = (x, kind, hp) => ({ block: 0, x, y: 1, hp, maxHp: hp, kind, neighbors: 0 });
+  const [normal, hard, elemental, unbroken] = [makeStone(0, 'stone', 1), makeStone(1, 'hard', 1), makeStone(2, 'elemental', 1), makeStone(3, 'stone', 100)];
+  s.stones = [normal, hard, elemental, unbroken]; game.rebuildIndex();
+  for (const stone of [normal, hard, elemental]) game.hit(stone, 1, true, true);
+  assert.equal(s.alchemy.earth, 20 - A.pickEarthPerStone * (1 + 3 + 2));
+  const hp = unbroken.hp;
+  game.hit(unbroken, 1, true, true);
+  assert.equal(unbroken.hp, hp - A.pickDamageMultiplier);
+  assert.equal(s.alchemy.earth, 8);
+  s.alchemy.earth = 0;
+  game.hit(unbroken, 1, true, true);
+  assert.equal(unbroken.hp, hp - A.pickDamageMultiplier - 1);
+});
+
+test('earth enhancement lets the pick overcome elemental resistance', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  Object.assign(s, { furthestBlock: A.earthUnlockBlock, pickUnlocked: true, penetration: 1, buffRemaining: 0, charges: 0 });
+  Object.assign(s.alchemy, { earth: 20, pickEnabled: true });
+  const stone = { block: 0, x: 0, y: 1, hp: 100, maxHp: 100, kind: 'elemental', neighbors: 0 };
+  s.stones = [stone]; game.rebuildIndex();
+  game.hit(stone, 1, true, true);
+  assert.equal(stone.hp, 100 - A.pickDamageMultiplier);
+  s.alchemy.earth = 0;
+  game.hit(stone, 1, true, true);
+  assert.equal(stone.hp, 100 - A.pickDamageMultiplier - 1 / C.elementalMultiplier);
+});
+
+test('alchemy speed upgrades are one-time, paid by their elements, and persist', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  s.furthestBlock = A.waterUnlockBlock;
+  Object.assign(s.alchemy, { earth: 500, water: 50, stone: 100, earthEnabled: true });
+  assert.equal(game.buyAlchemyUpgrade('earthSpeed'), true);
+  assert.equal(game.buyAlchemyUpgrade('earthSpeed'), false);
+  assert.equal(game.buyAlchemyUpgrade('waterSpeed'), true);
+  game.advance(A.earthRecipe.seconds / 2);
+  assert.equal(s.alchemy.earth, 10);
+  assert.equal(s.alchemy.water, 0);
+  s.paused = true; game.save();
+  const restored = new PreInfinityGame();
+  assert.equal(restored.state.alchemy.upgrades.earthSpeed, true);
+  assert.equal(restored.state.alchemy.upgrades.waterSpeed, true);
+});
+
+test('needle schedules one follow-up on a survivor after half a second', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  Object.assign(s, { x: 0, y: 0, needleUnlocked: true });
+  const stone = { block: 0, x: 0, y: 1, hp: 100, maxHp: 100, kind: 'stone', neighbors: 0 };
+  s.stones = [stone]; game.rebuildIndex();
+  assert.equal(game.launchNeedle(), true);
+  game.advanceProjectiles(s.projectiles[0].duration);
+  assert.equal(s.needleFollowUps.length, 1);
+  game.advanceProjectiles(C.needleFollowUpDelay - 0.01);
+  assert.equal(s.projectiles.length, 0);
+  game.advanceProjectiles(0.01);
+  assert.equal(s.projectiles.length, 1);
+  assert.equal(s.projectiles[0].followUp, true);
+  game.advanceProjectiles(s.projectiles[0].remaining);
+  assert.equal(s.needleFollowUps.length, 0);
+});
+
+test('needle spread can select adjacent stones without exceeding their remaining health', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  Object.assign(s, { x: 0, y: 0, needleUnlocked: true });
+  const stones = [0, 1].map(x => ({ block: 0, x, y: 1, hp: 1, maxHp: 1, kind: 'stone', neighbors: 0 }));
+  s.stones = stones; game.rebuildIndex();
+  const random = Math.random;
+  try {
+    Math.random = () => 0.99;
+    assert.equal(game.launchNeedle(), true);
+    assert.equal(s.projectiles[0].x, 1);
+    assert.equal(game.launchNeedle(), true);
+    assert.equal(s.projectiles[1].x, 0);
+    assert.equal(game.launchNeedle(), false);
+  } finally { Math.random = random; }
+});
+
+test('click buffer helps movement away from a target and drains while unpaused', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  Object.assign(s, { auto: true, tutorial: 'done', x: 0, y: 0 });
+  s.stones = [];
+  game.rebuildIndex();
+  for (let i = 0; i < 15; i++) game.click();
+  assert.equal(s.clickBuffer, 15);
+  new NearestStoneMovement().move(s, 20, 0, 1);
+  assert.ok(Math.abs(s.x - C.movementSpeed * 1.4) < 1e-8);
+  s.paused = true; game.advance(1); assert.equal(s.clickBuffer, 15);
+  s.paused = false; game.advance(1); assert.ok(s.clickBuffer < 15);
+});
+
+test('fist combo hits surrounding stones every third strike', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  Object.assign(s, { ore: C.costs.fistCombo, x: 5, y: 5 });
+  assert.equal(game.buy('fistCombo'), true);
+  const weapons = new Weapons();
+  const target = { block: 0, x: 6, y: 5, hp: 50, maxHp: 50, kind: 'stone', neighbors: 0 };
+  const nearby = { ...target, x: 9 };
+  const hit = (stone, damage) => { stone.hp -= damage; };
+  weapons.strike(s, target, [target, nearby], hit);
+  weapons.strike(s, target, [target, nearby], hit);
+  assert.equal(nearby.hp, 50);
+  weapons.strike(s, target, [target, nearby], hit);
+  assert.equal(nearby.hp, 50 - C.fistDamage);
+});
+
+test('spear requires square 25 and crystals, equips and hits in a circle', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  Object.assign(s, { furthestBlock: 23, ore: C.costs.spear, crystals: C.costs.spearCrystals, x: 5, y: 5 });
+  assert.equal(game.buy('spear'), false);
+  s.furthestBlock = 24;
+  assert.equal(game.buy('spear'), true);
+  game.equip('spear');
+  assert.equal(s.weapon, 'spear');
+  const near = { block: 0, x: 5, y: 6, hp: 50, maxHp: 50, kind: 'stone', neighbors: 0 };
+  const behind = { ...near, y: 4 };
+  game.weapons.strike(s, near, [near, behind], (stone, damage) => { stone.hp -= damage; });
+  assert.equal(near.hp, 50 - C.spearDamage);
+  assert.equal(behind.hp, 50 - C.spearDamage);
+});
+
+test('pick combo is gated by challenge and grants a dash after its third hit', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  Object.assign(s, { weapon: 'pick', x: 5, y: 5, pickUnlocked: true });
+  s.combos.pick = true;
+  const stone = { block: 0, x: 6, y: 5, hp: 100, maxHp: 100, kind: 'stone', neighbors: 0 };
+  const hit = (target, damage) => { target.hp -= damage; };
+  for (let i = 0; i < 3; i++) game.weapons.strike(s, stone, [stone], hit);
+  assert.equal(s.pickDash, false);
+  s.challenge1Completed = true;
+  for (let i = 0; i < 3; i++) game.weapons.strike(s, stone, [stone], hit);
+  assert.equal(s.pickDash, true);
+  const hp = stone.hp;
+  game.weapons.strike(s, stone, [stone], hit);
+  assert.equal(s.pickDash, false);
+  assert.ok(hp - stone.hp < 3 * C.baseMeleeDamage);
+});
+
+test('earth empowers direct fist hits while fist combo area bypasses the earth multiplier', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  Object.assign(s, { furthestBlock: A.earthUnlockBlock, pickUnlocked: true });
+  Object.assign(s.alchemy, { earth: 20, pickEnabled: true });
+  const direct = { block: 0, x: 5, y: 5, hp: 1, maxHp: 10, kind: 'stone', neighbors: 0 };
+  s.stones = [direct]; game.rebuildIndex();
+  game.hit(direct, 1, true, true, false, false, false);
+  assert.equal(s.alchemy.earth, 18);
+  const area = { ...direct, x: 6, hp: 1 };
+  s.stones = [area]; game.rebuildIndex();
+  game.hit(area, 1, true, true, false, false, true);
+  assert.equal(s.alchemy.earth, 18);
+});
+
+test('spear receives a wind bonus and spends air on its destroyed target', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  Object.assign(s, { furthestBlock: C.challenge1UnlockBlock, spearUnlocked: true, spearEnchant: true, challenge1Completed: true, weapon: 'spear' });
+  Object.assign(s.alchemy, { air: 2, airEnabled: true });
+  const stone = { block: 0, x: 5, y: 5, hp: 1, maxHp: 10, kind: 'stone', neighbors: 0 };
+  s.stones = [stone]; game.rebuildIndex();
+  game.hit(stone, 1, true, false, false, true, false);
+  assert.equal(s.alchemy.air, 1);
+});
+
+test('Challenge 1 is an isolated 2x2 arena with four-times-health rocks', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  s.furthestBlock = C.challenge1UnlockBlock;
+  const original = s.stones;
+  assert.equal(game.enterChallenge1(), true);
+  assert.equal(s.stones.length, 4);
+  assert.equal(s.stones[0].maxHp, 3 * C.challengeStoneMultiplier);
+  for (const stone of [...s.stones]) game.destroy(stone);
+  assert.equal(s.challengeWon, true);
+  assert.equal(s.challenge1Completed, true);
+  assert.equal(s.alchemy.air, 10);
+  assert.equal(game.leaveChallenge1(), true);
+  assert.equal(s.stones, original);
+  assert.equal(s.challengeArena, false);
+});
+
+test('manual click spends stored buffer only to cancel a pending hit cooldown', () => {
+  const game = new PreInfinityGame();
+  game.state.tutorial = 'done';
+  const s = game.state;
+  const target = { block: 0, x: 12, y: 24, hp: 100, maxHp: 100, kind: 'stone', neighbors: 0 };
+  Object.assign(s, { auto: true, tutorial: 'done', x: 12, y: 24, attackClock: 0.2 });
+  s.stones = [target]; game.rebuildIndex();
+  s.clickBuffer = 2;
+  game.click();
+  assert.equal(s.attackClock, 0);
+  assert.equal(s.clickBuffer, 2);
+  s.attackClock = 1; s.clickBuffer = 2; const before = target.hp;
+  game.click();
+  assert.equal(s.clickBuffer, 3);
+  assert.equal(target.hp, before - C.fistDamage);
+});
+
+test('late square resource bonuses add one ore at 5, 15 and 35', () => {
+  const game = new PreInfinityGame();
+  game.state.tutorial = 'done';
+  for (const block of [4, 5, 14, 15, 34, 35]) {
+    const stone = { block, x: 0, y: 1, hp: 1, maxHp: 1, kind: 'stone', neighbors: 0 };
+    game.state.stones = [stone]; game.state.block = block; game.rebuildIndex();
+    const before = game.state.ore;
+    game.destroy(stone);
+    assert.equal(game.state.ore - before, 1 + Number(block >= 5) + Number(block >= 15) + Number(block >= 35));
+  }
+});
+
+test('configurable capacity upgrades, repeatable exchange and persistent upgrades', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  s.furthestBlock = A.waterUnlockBlock;
+  s.alchemy.earth = 2000; s.crystals = 70;
+  for (const id of ['earth1', 'earth2', 'water1']) assert.equal(game.buyAlchemyUpgrade(id), true);
+  assert.equal(s.alchemy.earth, 0);
+  assert.equal(s.crystals, 0);
+  assert.equal(alchemyCapacity(s.alchemy, 'earth'), 6000);
+  assert.equal(alchemyCapacity(s.alchemy, 'water'), 200);
+  assert.equal(game.buyAlchemyUpgrade('earth1'), false);
+  s.alchemy.water = 100;
+  assert.equal(game.crystallizeWater(), true);
+  assert.equal(game.crystallizeWater(), true);
+  assert.equal(game.crystallizeWater(), false);
+  assert.equal(s.crystals, 2);
+  s.alchemy.earthEnabled = true;
+  s.paused = true; game.save();
+  const restored = new PreInfinityGame();
+  assert.equal(restored.state.alchemy.earthEnabled, true);
+  assert.equal(alchemyCapacity(restored.state.alchemy, 'earth'), 6000);
+  Object.assign(restored.state.alchemy, { stone: 10, earth: 10, water: 10, elementalStone: 10 });
+  restored.fail();
+  assert.deepEqual([restored.state.alchemy.stone, restored.state.alchemy.earth, restored.state.alchemy.water, restored.state.alchemy.elementalStone], [0, 0, 0, 0]);
+  assert.equal(alchemyCapacity(restored.state.alchemy, 'earth'), 6000);
+  assert.equal(restored.state.alchemy.earthEnabled, true);
+});
+
+test('alchemy upgrade requirements are data driven', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  Object.assign(s, { furthestBlock: 29, crystals: 10 });
+  s.alchemy.earth = 20;
+  const custom = { id: 'future', node: 'earth', name: 'Future', description: '', cost: { earth: 10, crystals: 5 }, capacity: { earth: 50 }, minBlock: 30, requires: ['earth1'] };
+  assert.equal(game.canBuyAlchemyUpgrade(custom), false);
+  s.furthestBlock = 30;
+  assert.equal(game.canBuyAlchemyUpgrade(custom), false);
+  s.alchemy.upgrades.earth1 = true;
+  assert.equal(game.canBuyAlchemyUpgrade(custom), true);
+  assert.equal(game.canBuyAlchemyUpgrade({ ...custom, challenge: 1 }), false);
+});
+
+test('old saves get alchemy defaults without losing existing progression', () => {
+  const game = new PreInfinityGame();
+  Object.assign(game.state, { ore: 77, crystals: 12, furthestBlock: 21, paused: true });
+  game.save();
+  const legacy = JSON.parse(storage.get('pioneer-breach-v1'));
+  delete legacy.alchemy;
+  storage.set('pioneer-breach-v1', JSON.stringify(legacy));
+  const restored = new PreInfinityGame();
+  assert.equal(restored.state.ore, 77);
+  assert.equal(restored.state.crystals, 12);
+  assert.equal(restored.alchemyNodeUnlocked('earth'), true);
+  assert.equal(restored.state.alchemy.earth, 0);
+  assert.deepEqual(restored.state.alchemy.upgrades, {});
+});
+
+test('enabled alchemy recipes continue during offline simulation', () => {
+  const game = new PreInfinityGame();
+  Object.assign(game.state, { furthestBlock: A.earthUnlockBlock, paused: false });
+  Object.assign(game.state.alchemy, { stone: 100, earthEnabled: true });
+  game.save();
+  const saved = JSON.parse(storage.get('pioneer-breach-v1'));
+  saved.savedAt = Date.now() - 2000;
+  storage.set('pioneer-breach-v1', JSON.stringify(saved));
+  const restored = new PreInfinityGame();
+  assert.ok(restored.state.alchemy.earth >= 10);
+  assert.equal(restored.state.alchemy.stone + restored.state.alchemy.earth, 100);
 });

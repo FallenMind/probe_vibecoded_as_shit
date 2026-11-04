@@ -81,6 +81,45 @@ h1 { margin-top: 8px; color: #f4f2e9; font-size: clamp(23px, 2.3vw, 34px); lette
 .challenge-card { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 10px 12px; border: 1px solid #30464c; border-radius: 8px; background: #172a31; color: #9caeac; font-size: 11px; }
 .challenge-card span { color: #82999a; font-size: 10px; text-align: right; }
 .challenge-card.unlocked { border-color: #b89a68; color: #f0d2a1; }
+.game-tabs { display: flex; gap: 6px; margin-top: 16px; }
+.game-tab { padding: 9px 16px; border: 1px solid #30464c; border-radius: 8px; background: #14242c; color: #98aaa9; font-size: 12px; font-weight: 700; }
+.game-tab.active { border-color: #e4bc7a; color: #f5deb4; background: #26343a; }
+.alchemy-view { padding-top: 28px; }
+.alchemy-heading p { margin-top: 10px; color: #8da2a3; font-size: 12px; line-height: 1.5; }
+.alchemy-tab-icon { color: #849493; font-size: 17px; }
+.map-wrap.overheated { filter: hue-rotate(calc(var(--heat) * -24deg)) saturate(calc(1 + var(--heat) * .3)); animation: heat-wobble calc(1.6s - var(--heat) * .9s) ease-in-out infinite; }
+.map-wrap.overheated::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(circle at 17% 23%, #ffcf6b88 0 2px, transparent 4px), radial-gradient(circle at 78% 31%, #ff945977 0 2px, transparent 5px), radial-gradient(circle at 63% 79%, #ffd77866 0 1px, transparent 4px); animation: heat-particles .7s linear infinite alternate; opacity: var(--heat); }
+@keyframes heat-wobble { 0%,100% { transform: translateX(0) rotate(0); } 25% { transform: translateX(calc(var(--heat) * -2px)) rotate(calc(var(--heat) * -.12deg)); } 75% { transform: translateX(calc(var(--heat) * 2px)) rotate(calc(var(--heat) * .12deg)); } }
+@keyframes heat-particles { to { background-position: 5px -12px, -8px 9px, 12px -6px; } }
+.challenge-card { width: 100%; font: inherit; text-align: left; cursor: pointer; }
+.challenge-card:disabled { cursor: default; }
+.game-tab.unlocked .alchemy-tab-icon { color: #f5d889; text-shadow: 0 0 8px #f3c66e, 0 0 18px #e5a64a; }
+.alchemy-help { position: relative; margin-top: 12px; }
+.alchemy-help summary { display: grid; place-items: center; width: 44px; height: 44px; border: 2px solid #e5d494; border-radius: 50%; background: #29413c; color: #ffedb3; cursor: pointer; list-style: none; font-weight: bold; font-size: 22px; }
+.new-feature { animation: feature-pulse 1.3s ease-in-out infinite; }
+@keyframes feature-pulse { 50% { box-shadow: 0 0 0 3px #f9d98699, 0 0 18px #edc975; filter: brightness(1.25); } }
+@media (prefers-reduced-motion: reduce) { .new-feature { animation: none; outline: 2px solid #f9d986; } }
+.alchemy-help summary::-webkit-details-marker { display: none; }
+.alchemy-help > div { max-width: 640px; margin-top: 8px; padding: 14px; border: 1px solid #49635e; border-radius: 8px; background: #15292d; color: #e5efea; font-size: 12px; }
+.alchemy-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 390px); gap: 24px; margin-top: 24px; align-items: start; }
+.alchemy-nodes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; padding: 28px; border: 1px solid #30434a; border-radius: 14px; background: radial-gradient(circle at center, #1b3637, #101f28 72%); }
+.alchemy-node { min-height: 130px; display: grid; place-content: center; justify-items: center; gap: 8px; border: 1px solid #455950; border-radius: 14px; background: #1b302e; color: #e7e4d8; text-align: center; }
+.alchemy-node.selected { border-color: #e6c48c; box-shadow: 0 0 0 2px #e6c48c44; }
+.alchemy-node.locked { background: #19272d; color: #829494; }
+.alchemy-node small { color: #a5b6af; font-size: 10px; }
+.alchemy-symbol { display: grid; place-items: center; width: 48px; height: 48px; border: 1px solid currentColor; border-radius: 50%; font-size: 24px; color: #c7bd84; }
+.alchemy-node.water .alchemy-symbol { color: #7ccbd1; }.alchemy-node.fire .alchemy-symbol { color: #d99d7b; }.alchemy-node.air .alchemy-symbol { color: #b9c7d3; }
+.alchemy-details { min-height: 290px; padding: 22px; border: 1px solid #30434a; border-radius: 14px; background: #112027; }
+.alchemy-details h2 { margin-top: 7px; font-size: 22px; }.alchemy-details p { margin-top: 10px; color: #9bb0ad; font-size: 12px; line-height: 1.5; }
+.alchemy-resources { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0; }.alchemy-resources span { padding: 8px 10px; border: 1px solid #30464c; border-radius: 8px; color: #9bb0ad; font-size: 11px; }.alchemy-resources b { color: #f3d3a0; }
+.alchemy-action { display: block; width: 100%; margin-top: 8px; padding: 10px; border: 1px solid #49635e; border-radius: 8px; background: #1b3033; color: #e5efea; font-size: 11px; text-align: left; }
+.alchemy-action.active { border-color: #9dcca7; color: #b8e7c1; }.alchemy-action:disabled { opacity: .5; }
+.alchemy-details h3 { margin: 22px 0 8px; color: #b8c7bf; font-size: 12px; }
+.alchemy-upgrades { display: grid; gap: 8px; }
+.alchemy-upgrade { padding: 10px; border: 1px solid #49635e; border-radius: 8px; background: #eadbbd; color: #263531; text-align: left; font-size: 11px; line-height: 1.4; }
+.alchemy-upgrade:disabled { background: #1b3033; color: #9caeaa; opacity: .65; }
+.alchemy-upgrade.acquired { border-color: #597a5e; color: #9bc5a2; }
+@media (max-width: 760px) { .alchemy-layout { grid-template-columns: 1fr; }.alchemy-nodes { padding: 16px; gap: 10px; }.alchemy-node { min-height: 110px; } }
 footer { display: flex; justify-content: space-between; margin-top: 28px; padding-top: 18px; border-top: 1px solid #2a3d43; color: #6d8585; font-size: 9px; letter-spacing: .12em; }
 @media (max-width: 950px) { .shell { padding: 0 18px 30px; }.layout { grid-template-columns: minmax(0, 1fr); }.sidebar { width: 100%; }.section-heading { align-items: start; }.live-badge { margin-top: 7px; } }
 @media (max-width: 520px) { .shell { padding-inline: 12px; }.topbar { height: 70px; }.top-actions #save-status, .live-badge { display: none; }.layout { padding-top: 22px; gap: 20px; }.sidebar { padding: 17px; }.map-top { padding: 16px 15px 6px; }.map-bottom { flex-wrap: wrap; padding: 10px 15px 15px; }.map-key { font-size: 8px; margin-right: 7px; }.below-map { flex-direction: column; gap: 5px; }.resources { gap: 4px; }.resource { padding: 8px 5px; }.resource small { font-size: 7px; } }

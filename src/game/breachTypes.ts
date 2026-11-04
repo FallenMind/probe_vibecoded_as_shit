@@ -1,5 +1,7 @@
+import type { AlchemyState } from './alchemy';
+
 export type StoneKind = 'stone' | 'hard' | 'elemental';
-export type WeaponId = 'fists' | 'pick' | 'ranged';
+export type WeaponId = 'fists' | 'pick' | 'spear' | 'ranged';
 export type RangedWeaponId = 'emitter' | 'needle';
 export type TutorialStep = 'click' | 'auto' | 'second' | 'penetration' | 'third' | 'done';
 
@@ -12,13 +14,13 @@ export interface Stone {
   kind: StoneKind;
   neighbors: number;
 }
-
 export interface Projectile {
   block: number; x: number; y: number; fromX: number; fromY: number;
-  duration: number; remaining: number; damage: number; pierce: number;
+  duration: number; remaining: number; damage: number; pierce: number; followUp?: boolean;
 }
 
 export interface BreachState {
+  alchemy: AlchemyState;
   version: 1;
   balanceVersion: number;
   paused: boolean;
@@ -39,6 +41,34 @@ export interface BreachState {
   expansion: number;
   auto: boolean;
   pickUnlocked: boolean;
+  spearUnlocked: boolean;
+  spearLevel: number;
+  spearReachLevel: number;
+  spearPierce: boolean;
+  spearEnchant: boolean;
+  challenge1Completed: boolean;
+  fistComboUnlocked: boolean;
+  fistComboRadiusLevel: number;
+  combos: Record<'fists' | 'pick' | 'spear', boolean>;
+  comboCounts: Record<'fists' | 'pick' | 'spear', number>;
+  pickDash: boolean;
+  pickDashCharge: number;
+  spearDashCharge: number;
+  clickBuffer: number;
+  clickHeat: number;
+  clickWindowCount: number;
+  clickWindowTime: number;
+  challengeArena: boolean;
+  challengeWon: boolean;
+  challengeFailed: boolean;
+  challengeRemaining: number;
+  challengeReturnStones: Stone[] | null;
+  challengeReturnSize: number | null;
+  challengeReturnBlock: number | null;
+  challengeReturnX: number | null;
+  challengeReturnY: number | null;
+  alchemyHelpSeen: boolean;
+  seenFeatures: Record<string, boolean>;
   repeatablesUnlocked: boolean;
   attackClock: number;
   penetration: number;
@@ -52,13 +82,22 @@ export interface BreachState {
   needlePierceLevel: number;
   emitterSpreadLevel: number;
   emitterAreaLevel: number;
+  fistComboRadiusRewardedLevels: number;
   beamSpeedLevel: number;
   rangedWeapon: RangedWeaponId;
   needleUnlocked: boolean;
   needleAltUnlocked: boolean;
   needleAltClock: number;
+  needleRecheckClock: number;
   projectiles: Projectile[];
+  needleFollowUps: { block: number; x: number; y: number; remaining: number }[];
   clickLevel: number;
+  fistSpeedLevel: number;
+  pickSpeedLevel: number;
+  spearSpeedLevel: number;
+  needleSpeedLevel: number;
+  emitterSpeedLevel: number;
+  weaponMasteries: { fist: boolean; pick: boolean; spear: boolean; needle: boolean; emitter: boolean };
   speedLevel: number;
   movementLevel: number;
   weapon: WeaponId;

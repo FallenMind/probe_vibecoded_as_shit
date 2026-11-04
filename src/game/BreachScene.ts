@@ -7,6 +7,7 @@ import { stoneNoise } from './stoneNoise';
 export class BreachScene extends Phaser.Scene {
   private graphics!: Phaser.GameObjects.Graphics;
   private pickSprite!: Phaser.GameObjects.Image;
+  private spearSprite!: Phaser.GameObjects.Image;
   private readonly noiseCache = new Map<string, number>();
   private previousPosition = { x: 0, y: 0, block: -1 };
   private previousBeam: { x: number; y: number } | null = null;
@@ -15,11 +16,15 @@ export class BreachScene extends Phaser.Scene {
 
   constructor() { super('BreachScene'); }
 
-  preload(): void { this.load.svg('flint-pickaxe', `${import.meta.env.BASE_URL}assets/flint-pickaxe.svg`, { width: 64, height: 64 }); }
+  preload(): void {
+    this.load.svg('metal-pickaxe', `${import.meta.env.BASE_URL}assets/metal-pickaxe.svg`, { width: 64, height: 64 });
+    this.load.svg('metal-spear', `${import.meta.env.BASE_URL}assets/metal-spear.svg`, { width: 64, height: 64 });
+  }
 
   create(): void {
     this.graphics = this.add.graphics();
-    this.pickSprite = this.add.image(0, 0, 'flint-pickaxe').setOrigin(0.15, 0.85).setVisible(false);
+    this.pickSprite = this.add.image(0, 0, 'metal-pickaxe').setOrigin(0.15, 0.85).setVisible(false);
+    this.spearSprite = this.add.image(0, 0, 'metal-spear').setOrigin(0.2, 0.5).setVisible(false);
     this.input.on('pointerdown', () => breachGame.click());
     this.resetInterpolation();
   }
@@ -139,7 +144,7 @@ export class BreachScene extends Phaser.Scene {
       g.fillStyle(0xf8efe0, Math.max(0, 0.18 * (1 - progress * 4)));
       g.fillRect(left, top, tile * size, tile * size);
     } else {
-      breachGame.weapons.draw(g, s, tile, px, py, this.pickSprite, { x: visualX, y: visualY, alpha, previousBeam: this.previousBeam, offset: visualOffset });
+      breachGame.weapons.draw(g, s, tile, px, py, this.pickSprite, this.spearSprite, { x: visualX, y: visualY, alpha, previousBeam: this.previousBeam, offset: visualOffset });
       for (const shot of s.projectiles) {
         if (shot.block !== s.block) continue;
         const t = Math.max(0, Math.min(1, 1 - (shot.remaining - visualOffset) / shot.duration));
