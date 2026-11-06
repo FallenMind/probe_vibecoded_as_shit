@@ -1,7 +1,7 @@
 import type { AlchemyState } from './alchemy';
 
 export type StoneKind = 'stone' | 'hard' | 'elemental';
-export type WeaponId = 'fists' | 'pick' | 'spear' | 'ranged';
+export type WeaponId = 'fists' | 'pick' | 'spear' | 'ranged' | 'bombarda';
 export type RangedWeaponId = 'emitter' | 'needle';
 export type TutorialStep = 'click' | 'auto' | 'second' | 'penetration' | 'third' | 'done';
 
@@ -13,10 +13,15 @@ export interface Stone {
   maxHp: number;
   kind: StoneKind;
   neighbors: number;
+  ignited?: boolean;
+  burnTickRemaining?: number;
+  burning?: boolean;
+  damageFlash?: number;
+  damageFlashColor?: number;
 }
 export interface Projectile {
   block: number; x: number; y: number; fromX: number; fromY: number;
-  duration: number; remaining: number; damage: number; pierce: number; followUp?: boolean;
+  duration: number; remaining: number; damage: number; pierce: number; followUp?: boolean; elementalPierce?: boolean;
 }
 
 export interface BreachState {
@@ -46,7 +51,30 @@ export interface BreachState {
   spearReachLevel: number;
   spearPierce: boolean;
   spearEnchant: boolean;
+  spatialCompressorUnlocked: boolean;
   challenge1Completed: boolean;
+  challenge2Completed: boolean;
+  challenge3Completed: boolean;
+  challengeNumber: 1 | 2 | 3 | 4;
+  challenge3Transmuted: number;
+  challenge3WaterProduced: boolean;
+  challenge3AirProduced: boolean;
+  challenge4Completed: boolean;
+  spectraUnlocked: boolean;
+  bombardaUnlocked: boolean;
+  spectraUpgrades: Record<string, boolean>;
+  cycleUpgrades: Record<string, boolean>;
+  autoCrystallizeEnabled: boolean;
+  autoCrystallizeClock: number;
+  challengeRegenClock: number;
+  challenge4StoneMultiplier: number;
+  challenge4DamageMultiplier: number;
+  challenge4RangeBonus: number;
+  pickInfinityEnchant: boolean;
+  fistUniqueUpgrade: boolean;
+  emitterPierceUpgrade: boolean;
+  needleFireUpgrade: boolean;
+  rangedBurstCharge: number;
   fistComboUnlocked: boolean;
   fistComboRadiusLevel: number;
   combos: Record<'fists' | 'pick' | 'spear', boolean>;
@@ -67,6 +95,8 @@ export interface BreachState {
   challengeReturnBlock: number | null;
   challengeReturnX: number | null;
   challengeReturnY: number | null;
+  challengeReturnAlchemy: AlchemyState | null;
+  challengeReturnBossRemaining: number | null;
   alchemyHelpSeen: boolean;
   seenFeatures: Record<string, boolean>;
   repeatablesUnlocked: boolean;
@@ -106,6 +136,13 @@ export interface BreachState {
   artifactClock: number;
   rangedClock: number;
   boundary: number | null;
+  bossRemaining: number;
+  earthOverloadRemaining: number;
+  earthOverloadCounter: number;
+  earthOverloadUsed: boolean;
+  pickAlchemyOptimized: boolean;
+  endChargeRemaining: number;
+  challengeReturnEndChargeRemaining: number | null;
   reagent: number;
   reagentClock: number;
   charges: number;

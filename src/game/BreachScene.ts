@@ -3,6 +3,26 @@ import { breachGame } from './breach';
 import { BREACH_CONFIG as C } from './breachConfig';
 import { stoneNoise } from './stoneNoise';
 
+const STONE_PALETTES = [
+  { stone: 0x6e7b86, hard: 0x8d758e, elemental: 0x51a3a0 },
+  { stone: 0x716f8d, hard: 0x9b7796, elemental: 0x65a7cc },
+  { stone: 0x697d70, hard: 0x8e8a63, elemental: 0x83b179 },
+  { stone: 0x81706c, hard: 0xa28567, elemental: 0xd38b62 },
+  { stone: 0x617d84, hard: 0x718c9d, elemental: 0x78c7d1 },
+  { stone: 0x777084, hard: 0x9a7899, elemental: 0xc094d5 },
+  { stone: 0x77796b, hard: 0x9c9069, elemental: 0xc3b36e },
+  { stone: 0x66777d, hard: 0x7e9392, elemental: 0x8ac9b5 },
+  { stone: 0x766b68, hard: 0x9a7771, elemental: 0xd58c83 },
+  { stone: 0x687083, hard: 0x8086a3, elemental: 0xa5b9ea },
+];
+
+function stonePaletteIndex(block: number): number {
+  if (block === C.blockCount - 1) return 9;
+  const wave = block + 1;
+  const boss = wave % C.bossEveryBlocks === 0 && wave < C.blockCount;
+  return (Math.floor(block / C.bossEveryBlocks) * 2 + Number(boss)) % STONE_PALETTES.length;
+}
+
 /** Сцена только отображает состояние; правила попытки находятся в PreInfinityGame. */
 export class BreachScene extends Phaser.Scene {
   private graphics!: Phaser.GameObjects.Graphics;
@@ -54,8 +74,10 @@ export class BreachScene extends Phaser.Scene {
     const effect = breachGame.resetEffect;
     const visualOffset = s.paused ? 0 : Math.min(this.simulationDuration, Math.max(0, (performance.now() - this.simulationTime) / 1000));
     const alpha = visualOffset / this.simulationDuration;
-    const visualX = this.previousPosition.block === s.block ? this.previousPosition.x + (s.x - this.previousPosition.x) * alpha : s.x;
-    const visualY = this.previousPosition.block === s.block ? this.previousPosition.y + (s.y - this.previousPosition.y) * alpha : s.y;
+    let visualX = this.previousPosition.block === s.block ? this.previousPosition.x + (s.x - this.previousPosition.x) * alpha : s.x;
+    let visualY = this.previousPosition.block === s.block ? this.previousPosition.y + (s.y - this.previousPosition.y) * alpha : s.y;
+    const spearActor = breachGame.weapons.spearDashActorPosition(visualOffset);
+    if (spearActor && !effect) { visualX = spearActor.x; visualY = spearActor.y; }
     const size = effect?.size ?? s.size;
     const tile = Math.min((width - 70) / size, (height - 110) / (size + 1));
     const left = (width - tile * size) / 2;
@@ -78,7 +100,8 @@ export class BreachScene extends Phaser.Scene {
       });
     }
     for (const stone of stones) {
-      const color = stone.kind === 'hard' ? 0x8d758e : stone.kind === 'elemental' ? 0x51a3a0 : 0x6e7b86;
+      const palette = STONE_PALETTES[stonePaletteIndex(s.block)];
+      const color = stone.kind === 'hard' ? palette.hard : stone.kind === 'elemental' ? palette.elemental : palette.stone;
       g.fillStyle(color, 1);
       g.fillRect(left + stone.x * tile, top + stone.y * tile, tile + 0.5, tile + 0.5);
       const noiseKey = `${stone.block}:${stone.x}:${stone.y}`;
@@ -95,6 +118,17 @@ export class BreachScene extends Phaser.Scene {
         g.fillStyle(variation === 0 ? 0xffffff : 0x17232b, 0.07);
         g.fillCircle(px(stone.x) + tile * 0.16, py(stone.y) - tile * 0.1, tile * 0.18);
       }
+      if ((stone.damageFlash ?? 0) > 0) {
+        g.fillStyle(stone.damageFlashColor ?? 0xe7c37c, Math.min(0.2, (stone.damageFlash ?? 0) * 0.2));
+        g.fillRect(left + stone.x * tile, top + stone.y * tile, tile + 0.5, tile + 0.5);
+      }
+      if (stone.burning) {
+        const flicker = 0.5 + 0.5 * Math.sin(this.time.now / 75 + stone.x * 1.7 + stone.y * 2.3);
+        g.fillStyle(0xff762e, 0.12 + flicker * 0.08);
+        g.fillCircle(px(stone.x), py(stone.y), tile * (0.28 + flicker * 0.08));
+        g.fillStyle(0xffd078, 0.35 + flicker * 0.25);
+        g.fillCircle(px(stone.x) + Math.sin(this.time.now / 90 + stone.y) * tile * 0.08, py(stone.y) - tile * 0.12, tile * 0.09);
+      }
       if (stone.hp < stone.maxHp) {
         const stage = Math.min(5, Math.ceil((1 - Math.max(0, stone.hp / stone.maxHp)) * 5));
         const x = left + stone.x * tile, y = top + stone.y * tile;
@@ -108,6 +142,19 @@ export class BreachScene extends Phaser.Scene {
           g.lineBetween(x + tile * 0.34, y + tile * 0.75, x + tile * 0.17, y + tile * 0.64);
         }
       }
+    }
+
+    const compressor = breachGame.compressorEffect;
+    if (compressor) {
+      const progress = Math.max(0, Math.min(1, (compressor.elapsed + visualOffset) / C.compressorAnimationSeconds));
+      const intensity = Math.sin(progress * Math.PI);
+      const centerX = px(compressor.x), centerY = py(compressor.y);
+      g.fillStyle(0xb890ff, 0.035 * intensity);
+      g.fillRect(left, top, tile * size, tile * size);
+      g.lineStyle(Math.max(2, tile * 0.11), 0xc2a0ff, 0.52 * (1 - progress));
+      g.strokeCircle(centerX, centerY, tile * (0.35 + progress * size * 0.52));
+      g.fillStyle(0xe8d9ff, 0.14 * intensity);
+      g.fillCircle(centerX, centerY, tile * (0.2 + intensity * 0.55));
     }
 
     if (s.target && !effect) {
@@ -167,9 +214,57 @@ export class BreachScene extends Phaser.Scene {
         g.beginPath(); g.moveTo(left - 8, boundaryY); g.lineTo(left + tile * s.size + 8, boundaryY); g.strokePath();
       }
     }
+    if (!s.challengeArena && s.block === C.blockCount - 1 && (s.endChargeRemaining > 0 || breachGame.finalWallEffect)) {
+      const charge = breachGame.finalWallEffect
+        ? 1
+        : 1 - s.endChargeRemaining / C.finalChargeSeconds;
+      const pulse = 0.7 + 0.3 * Math.sin(this.time.now / 95);
+      const wallY = top + tile * 0.42;
+      g.fillStyle(0xf5fbff, 0.16 + charge * 0.3);
+      g.fillRect(left - 8, wallY - tile * 0.12, tile * size + 16, tile * 0.28);
+      g.lineStyle(Math.max(3, tile * 0.18), 0xf5fbff, 0.9 * pulse);
+      g.beginPath(); g.moveTo(left - 8, wallY); g.lineTo(left + tile * size + 8, wallY); g.strokePath();
+      g.lineStyle(Math.max(2, tile * 0.1), 0x8fdcff, 0.5 + charge * 0.3);
+      g.beginPath(); g.moveTo(left, wallY - tile * 0.12); g.lineTo(left + tile * size, wallY - tile * 0.12); g.strokePath();
+      g.lineStyle(Math.max(2, tile * 0.08), 0xc09bff, 0.4 + charge * 0.35);
+      g.beginPath(); g.moveTo(left, wallY + tile * 0.12); g.lineTo(left + tile * size, wallY + tile * 0.12); g.strokePath();
+      for (let i = 0; i < 14; i++) {
+        const phase = this.time.now / 300 + i * 2.13;
+        const x = left + ((i * 0.173 + (this.time.now / 9000) % 1) % 1) * tile * size;
+        const y = wallY - tile * (0.2 + Math.abs(Math.sin(phase)) * 0.7);
+        g.fillStyle(i % 2 ? 0xc7aaff : 0xc4efff, 0.35 + 0.45 * pulse);
+        g.fillCircle(x, y, Math.max(1.5, tile * 0.055));
+      }
+      if (breachGame.finalWallEffect) {
+        const impact = Math.max(0, 1 - breachGame.finalWallEffect.elapsed / 0.65);
+        g.lineStyle(Math.max(2, tile * 0.09), 0xdbeeff, impact * 0.8);
+        for (let i = 0; i < 9; i++) {
+          const x = left + (i + 0.5) * tile * size / 9;
+          g.lineBetween(x, wallY, x + Math.sin(i * 7) * tile * 0.22, wallY + tile * (0.4 + (i % 3) * 0.25));
+        }
+      }
+    }
     if (s.tutorial === 'click') {
       g.lineStyle(3, 0xffd78c, 0.75 + 0.2 * Math.sin(this.time.now / 250));
       if (s.target) g.strokeCircle(px(s.target.x), py(s.target.y), tile * 0.34);
+    }
+
+    const challengeTransition = breachGame.challengeTransition;
+    if (challengeTransition) {
+      const transitionProgress = Math.min(1, (challengeTransition.elapsed + visualOffset) / C.challengeTransitionSeconds);
+      const pulse = Math.sin(transitionProgress * Math.PI);
+      const color = challengeTransition.type === 'result'
+        ? challengeTransition.success ? 0xe8bf78 : 0xef775f
+        : 0x8de0d2;
+      const veil = challengeTransition.type === 'enter'
+        ? 0.78 * (1 - transitionProgress)
+        : challengeTransition.type === 'exit' ? 0.78 * transitionProgress : 0.12 + pulse * 0.16;
+      g.fillStyle(0x07131b, veil);
+      g.fillRect(left, top, tile * size, tile * size);
+      g.lineStyle(Math.max(2, tile * 0.09), color, 0.8 * (1 - transitionProgress * 0.35));
+      g.strokeCircle(left + tile * size / 2, top + tile * size / 2, tile * (0.15 + transitionProgress * size * 0.72));
+      g.fillStyle(color, 0.08 + pulse * 0.12);
+      g.fillCircle(left + tile * size / 2, top + tile * size / 2, tile * (size * 0.18 + pulse * size * 0.12));
     }
   }
 }
