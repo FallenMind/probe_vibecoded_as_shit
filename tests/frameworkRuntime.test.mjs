@@ -5,10 +5,10 @@ import { createServer } from 'vite';
 const storage = new Map();
 globalThis.localStorage = { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) };
 const server = await createServer({ configFile: false, server: { middlewareMode: true, hmr: false }, appType: 'custom' });
-const { FrameworkGame, getRun, SAVE_KEY } = await server.ssrLoadModule('/src/framework/runtime/game.ts');
-const { GameVisuals } = await server.ssrLoadModule('/src/framework/animation/gameVisuals.ts');
-const { StateMapAccess } = await server.ssrLoadModule('/src/framework/world/mapAccess.ts');
-const { createScreenRenderer } = await server.ssrLoadModule('/src/framework/runtime/screen.ts');
+const { FrameworkGame, getRun, SAVE_KEY } = await server.ssrLoadModule('/src/game/runtime/game.ts');
+const { GameVisuals } = await server.ssrLoadModule('/src/game/animation/gameVisuals.ts');
+const { StateMapAccess } = await server.ssrLoadModule('/src/game/world/mapAccess.ts');
+const { createScreenRenderer } = await server.ssrLoadModule('/src/game/runtime/screen.ts');
 after(() => server.close());
 beforeEach(() => storage.clear());
 

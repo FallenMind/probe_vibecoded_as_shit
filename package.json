@@ -11,12 +11,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 0.0.0.0",
     "typecheck": "tsc --noEmit",
-    "test": "node --test src/framework/framework.test.mjs tests/frameworkRuntime.test.mjs",
-    "test:framework": "node --test src/framework/framework.test.mjs tests/frameworkRuntime.test.mjs",
-    "test:legacy": "node --test tests/breach.test.mjs"
-  },
-  "dependencies": {
-    "phaser": "4.2.1"
+    "test": "node --test src/game/framework.test.mjs tests/frameworkRuntime.test.mjs",
+    "test:framework": "node --test src/game/framework.test.mjs tests/frameworkRuntime.test.mjs"
   },
   "devDependencies": {
     "typescript": "7.0.2",

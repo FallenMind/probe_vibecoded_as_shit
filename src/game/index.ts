@@ -14,7 +14,6 @@ export * from './world/area';
 export * from './world/breachWorld';
 export * from './combat/breachDamage';
 export * from './combat/combatModule';
-export * from './adapters/weapons/effects';
 export * from './animation/animation';
 export * from './animation/gameVisuals';
 export * from './animation/canvasVisuals';

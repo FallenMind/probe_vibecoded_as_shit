@@ -1,9 +1,9 @@
-import './breach.css';
+import './app.css';
 import './framework.css';
-import { FrameworkGame, SAVE_KEY } from './framework/runtime/game';
-import { challengeDescriptions, createScreenRenderer, type AlchemyNodeId } from './framework/runtime/screen';
-import { GameVisuals } from './framework/animation/gameVisuals';
-import { CanvasGameRenderer } from './framework/animation/canvasVisuals';
+import { FrameworkGame, SAVE_KEY } from './game/runtime/game';
+import { challengeDescriptions, createScreenRenderer, type AlchemyNodeId } from './game/runtime/screen';
+import { GameVisuals } from './game/animation/gameVisuals';
+import { CanvasGameRenderer } from './game/animation/canvasVisuals';
 
 const game = FrameworkGame.load();
 const app = document.querySelector<HTMLElement>('#app')!;

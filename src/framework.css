@@ -1,4 +1,4 @@
-/* Дополнения для интерфейса каркаса; основная визуальная система — breach.css. */
+/* Стили для активного интерфейса игры поверх базовых компонентов app.css. */
 .map-wrap canvas { display: block; width: 100%; height: 100%; cursor: pointer; touch-action: manipulation; }
 .weapon-select { flex-wrap: wrap; }
 .weapon-select .equipment-button { min-width: 105px; }

@@ -1,8 +1,8 @@
 # Игровой каркас
 
-Действующая игра запускается через `src/frameworkMain.ts` и использует `runtime/game.ts`, `StateBus` и `GameState`. Новые карта, персонаж, оружие, алхимия и сохранение работают непосредственно с состоянием каркаса. Точные границы и упрощения описаны в `docs/framework-wiki.md`.
+Действующая игра запускается через `src/main.ts` и использует `runtime/game.ts`, `StateBus` и `GameState`. Карты, персонажи, оружие, алхимия, улучшения, испытания, анимации и сохранение собраны в `src/game/`.
 
-Папка `adapters/` содержит прежний переходный путь и не подключена к активной точке входа. Новая реализация использует упрощённый баланс и отдельное сохранение.
+Прежняя реализация удалена. Это единственный активный игровой код и единственный источник состояния. Формат нового сохранения отдельный; конвертера старых сохранений нет.
 
 ## Устройство
 
@@ -34,7 +34,7 @@
 ## Как обращаться к каркасу
 
 ```ts
-import { createDraftFramework, addCharacter } from './framework';
+import { createDraftFramework, addCharacter } from './index';
 
 const { bus, config } = createDraftFramework();
 bus.exchange({}, { stone: 1000 }); // Выдать ресурс через общую шину.
@@ -72,7 +72,7 @@ bus.invoke('upgrades', { type: 'set-enabled', payload: { id: 'fists.damage', ena
 Главное назначение временного отключения — испытания. Оно хранится отдельно от выбора игрока: `upgradeSuppressions` содержит независимые ограничения по источникам. Каждое может отключать все улучшения, указанные id или улучшения с заданными тегами. Совпадение по любому из условий подавляет и числовые, и особые эффекты, включая эффекты покупок, сделанных во время испытания. Уровни и цены при этом не меняются. Пока действует хотя бы одно ограничение, ручное включение не может его обойти.
 
 ```ts
-import { ChallengeWithUpgradeRestrictions } from './framework';
+import { ChallengeWithUpgradeRestrictions } from './index';
 
 // myChallenge реализует ChallengeRules.
 const challenge = new ChallengeWithUpgradeRestrictions(myChallenge, {

@@ -3,19 +3,21 @@ import { after, test } from 'node:test';
 import { createServer } from 'vite';
 
 const server = await createServer({ configFile: false, server: { middlewareMode: true }, appType: 'custom' });
-const { createDraftFramework, addCharacter, resolveStat, resolveStartingLayer, resolveRadiusLevelLimit, ChallengeWithUpgradeRestrictions, UpgradeModule, DEFAULT_CONFIG, StateBus, BreachAlchemyConversions, StateMapAccess, AnimationClip, AnimationSystem, createFalloffDamage, BreachWorldRules, BreachDamagePolicy, CombatModule, BreachWeaponEffects } = await server.ssrLoadModule('/src/framework/index.ts');
-const { BREACH_CONFIG: gameConfig } = await server.ssrLoadModule('/src/game/breachConfig.ts');
+const { createDraftFramework, addCharacter, resolveStat, resolveStartingLayer, resolveRadiusLevelLimit, ChallengeWithUpgradeRestrictions, UpgradeModule, DEFAULT_CONFIG, StateBus, BreachAlchemyConversions, StateMapAccess, AnimationClip, AnimationSystem, createFalloffDamage, BreachWorldRules, BreachDamagePolicy, CombatModule } = await server.ssrLoadModule('/src/game/index.ts');
+const world = DEFAULT_CONFIG.world;
+const gameConfig = { blockCount: world.layers, bossEveryBlocks: world.bossEveryLayers, bossStoneHpMultiplier: world.bossHealthMultiplier,
+  postBossHpMultiplier: world.postBossHealthMultiplier, postBossCompensationBlocks: world.postBossCompensationLayers,
+  ordinaryStoneHp: world.stoneHealth, hardStoneHp: world.hardHealth, elementalStoneHp: world.elementalHealth,
+  stoneHpLinearPerTwoBlocks: world.hpGrowthLinear, stoneHpPercentPerTwoBlocks: world.hpGrowthFraction,
+  elementalBossWave: 25, baseOreReward: world.oreRewardByKind, oreRewardLinearPerTwoBlocks: world.oreRewardLinear,
+  oreRewardPercentPerTwoBlocks: world.oreRewardFraction, mineralNoiseScale: world.mineralNoiseScale,
+  mineralNoiseOffsetX: world.mineralNoiseOffsetX, mineralNoiseOffsetY: world.mineralNoiseOffsetY,
+  hardMineralSeed: world.hardMineralSeed, elementalMineralSeed: world.elementalMineralSeed,
+  hardMineralThreshold: world.hardMineralThreshold, bossHardNoiseThreshold: world.bossHardThreshold,
+  elementalMineralThreshold: world.elementalMineralThreshold, elementalBossNoiseThreshold: world.elementalBossThreshold,
+  elementalMineralRampStartThreshold: world.elementalRampStartThreshold, elementalMineralStartBlock: world.elementalMineralFirstLayer,
+  elementalMineralNormalBlock: world.elementalMineralFullLayer, hardMineralStartBlock: world.hardMineralFirstLayer };
 after(() => server.close());
-
-test('анимация рывка копья хранится отдельно от игровой атаки и заканчивается по таймеру', () => {
-  const effects = new BreachWeaponEffects();
-  effects.attack('spear', 0, 3, 4, true, { fromX: 1, fromY: 2, toX: 3, toY: 4 });
-  assert.deepEqual(effects.spearActorPosition(0), { x: 1, y: 2 });
-  effects.tick(gameConfig.chargedAttackSeconds * 0.7);
-  assert.deepEqual(effects.spearActorPosition(0), { x: 3, y: 4 });
-  effects.tick(gameConfig.chargedAttackSeconds);
-  assert.equal(effects.spearActorPosition(0), null);
-});
 
 test('боевой модуль применяет прямое попадание и сплеш отдельно и не применяет неготовый снаряд', () => {
   const { bus } = createDraftFramework();
@@ -226,7 +228,7 @@ test('оружие планирует атаки для каждого перс�
 });
 
 test('улучшение покупается за общий ресурс и эффект вычисляется по уровню', async () => {
-  const { exampleUpgrades } = await server.ssrLoadModule('/src/framework/upgrades/examples.ts');
+  const { exampleUpgrades } = await server.ssrLoadModule('/src/game/upgrades/examples.ts');
   const { bus } = createDraftFramework();
   assert.equal(bus.exchange({}, { breakthrough: 1 }), true);
   assert.equal(bus.invoke('upgrades', { type: 'buy', payload: 'cycle.melee' }), true);
@@ -300,7 +302,7 @@ test('ограничение испытания временно подавля�
   assert.equal(bus.read().upgradeLevels['cycle.start'], 1);
   assert.equal(bus.invoke('upgrades', { type: 'set-suppression', payload: { source: 'event:storm', upgradeIds: ['fists.damage'] } }), true);
   assert.deepEqual(bus.snapshot().upgradeSuppressions['challenge:sample'].tags, ['cycle']);
-  const { exampleUpgrades } = await server.ssrLoadModule('/src/framework/upgrades/examples.ts');
+  const { exampleUpgrades } = await server.ssrLoadModule('/src/game/upgrades/examples.ts');
   const restored = new StateBus(bus.snapshot());
   restored.register(new UpgradeModule(exampleUpgrades));
   assert.equal(resolveStartingLayer(restored, 0), 0);

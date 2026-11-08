@@ -22,7 +22,7 @@ import { Spear } from './weapons/spear';
 import { WeaponModule } from './weapons/weaponModule';
 import type { GameState } from './core/model';
 
-/** Изолированный пример сборки. Он не создаёт Phaser-сцену и не читает игровые сохранения. */
+/** Изолированная сборка модулей для примеров и проверок; не читает игровые сохранения. */
 export function createDraftFramework(source: FrameworkConfig = DEFAULT_CONFIG, initial?: GameState): { bus: StateBus; config: FrameworkConfig } {
   const config = structuredClone(source);
   const bus = new StateBus(initial);
