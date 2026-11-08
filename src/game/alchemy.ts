@@ -71,14 +71,14 @@ export interface AlchemyState {
   upgrades: Record<string, boolean>;
 }
 
-export function alchemyTickSeconds(state: AlchemyState, node: 'earth' | 'water'): number {
+export function alchemyTickSeconds(state: AlchemyState, node: 'earth' | 'water', active: (id: string) => boolean = id => !!state.upgrades[id]): number {
   return ALCHEMY_UPGRADES.reduce<number>((seconds, upgrade) =>
-    upgrade.node === node && state.upgrades[upgrade.id] ? seconds * (upgrade.tickMultiplier ?? 1) : seconds,
+    upgrade.node === node && active(upgrade.id) ? seconds * (upgrade.tickMultiplier ?? 1) : seconds,
   ALCHEMY_CONFIG[`${node}Recipe`].seconds);
 }
 
-export function airProductionTickSeconds(state: AlchemyState): number {
-  return ALCHEMY_UPGRADES.reduce<number>((seconds, upgrade) => seconds * (state.upgrades[upgrade.id] ? upgrade.airProductionMultiplier ?? 1 : 1), ALCHEMY_CONFIG.airRecipe.seconds);
+export function airProductionTickSeconds(state: AlchemyState, active: (id: string) => boolean = id => !!state.upgrades[id]): number {
+  return ALCHEMY_UPGRADES.reduce<number>((seconds, upgrade) => seconds * (active(upgrade.id) ? upgrade.airProductionMultiplier ?? 1 : 1), ALCHEMY_CONFIG.airRecipe.seconds);
 }
 
 export function freshAlchemyState(): AlchemyState {
@@ -86,7 +86,7 @@ export function freshAlchemyState(): AlchemyState {
     pickEnabled: false, airProductionEnabled: false, elementalizationEnabled: false, earthClock: 0, waterClock: 0, airProductionClock: 0, fireClock: 0, upgrades: {} };
 }
 
-export function alchemyCapacity(state: AlchemyState, resource: 'earth' | 'water' | 'air' | 'fire'): number {
-  return ALCHEMY_UPGRADES.reduce<number>((max, upgrade) => max + (state.upgrades[upgrade.id] ? upgrade.capacity[resource] ?? 0 : 0),
+export function alchemyCapacity(state: AlchemyState, resource: 'earth' | 'water' | 'air' | 'fire', active: (id: string) => boolean = id => !!state.upgrades[id]): number {
+  return ALCHEMY_UPGRADES.reduce<number>((max, upgrade) => max + (active(upgrade.id) ? upgrade.capacity[resource] ?? 0 : 0),
     resource === 'earth' ? ALCHEMY_CONFIG.earthCapacity : resource === 'water' ? ALCHEMY_CONFIG.waterCapacity : resource === 'fire' ? ALCHEMY_CONFIG.fireCapacity : ALCHEMY_CONFIG.airCapacity);
 }

@@ -15,8 +15,849 @@ const { Weapons, splashMultiplier } = await server.ssrLoadModule('/src/game/weap
 const { NearestStoneMovement } = await server.ssrLoadModule('/src/game/movement.ts');
 const { stoneNoise } = await server.ssrLoadModule('/src/game/stoneNoise.ts');
 const { ALCHEMY_CONFIG: A, ALCHEMY_UPGRADES, alchemyCapacity } = await server.ssrLoadModule('/src/game/alchemy.ts');
+const { CHALLENGE_UPGRADE_RESTRICTIONS } = await server.ssrLoadModule('/src/game/challengeConfig.ts');
+const { BreachChallenges } = await server.ssrLoadModule('/src/framework/adapters/breachChallenges.ts');
+const { createBreachStatUpgrades } = await server.ssrLoadModule('/src/framework/adapters/breachStatUpgrades.ts');
 after(() => server.close());
 beforeEach(() => storage.clear());
+
+test('доступ к действующей карте изменяет единый массив и сохраняет индекс и награды', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  s.tutorial = 'done';
+  s.block = 0;
+  s.stones = [];
+  game.world.rebuild();
+  const stone = (x, kind = 'stone') => ({ block: 0, x, y: 1, hp: 10, maxHp: 10, kind, neighbors: 0 });
+  assert.equal(game.world.addStones([stone(1), stone(2, 'hard'), stone(3)]), true);
+  const stale = { ...game.world.getStone(0, 1, 1) };
+  assert.equal(game.world.removeStone(stale), false);
+  assert.equal(game.world.stonesInBlock(0).length, 3);
+  assert.equal(game.world.addStones([stone(4), stone(2)]), false);
+  assert.equal(game.world.getStone(0, 4, 1), undefined);
+  const area = { shape: 'circle', center: { x: 1, y: 1 }, radius: 1 };
+  assert.throws(() => game.world.damageArea(0, area, item => item.x === 2 ? NaN : 10, () => {}), /урон/);
+  assert.equal(game.world.getStone(0, 1, 1).hp, 10);
+  game.world.damageArea(0, area, 100, (item, amount) => game.hit(item, amount, false, false, true));
+  assert.equal(game.world.getStone(0, 1, 1), undefined);
+  assert.equal(game.world.getStone(0, 2, 1), undefined);
+  assert.ok(game.world.getStone(0, 3, 1));
+  assert.equal(s.alchemy.stone, 4);
+  assert.equal(s.stones.length, 1);
+});
+
+test('шина предоставляет снимки карты и редактирует её с учётом паузы', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  s.stones = [];
+  game.world.rebuild();
+  const stone = { block: 0, x: 1, y: 1, hp: 10, maxHp: 10, kind: 'stone', neighbors: 0 };
+  assert.equal(game.bus.invoke('world', { type: 'add-stones', payload: [stone] }), true);
+  assert.equal(game.bus.invoke('world', { type: 'add-stones', payload: [null] }), false);
+  const snapshot = game.bus.query('world', { type: 'stone', payload: { block: 0, x: 1, y: 1 } });
+  snapshot.hp = 1;
+  assert.equal(game.world.getStone(0, 1, 1).hp, 10);
+  assert.equal(game.bus.query('world', { type: 'area', payload: { block: 0, area: { shape: 'circle', center: { x: 1, y: 1 }, radius: 0 } } }).length, 1);
+  assert.equal(game.bus.query('world', { type: 'stone', payload: { block: 1, x: 1, y: -24 } }), undefined);
+  game.bus.setPaused(true);
+  assert.equal(game.bus.invoke('world', { type: 'remove-stone', payload: { block: 0, x: 1, y: 1 } }), false);
+  game.bus.setPaused(false);
+  assert.equal(game.bus.invoke('world', { type: 'remove-stone', payload: { block: 0, x: 1, y: 1 } }), true);
+  assert.equal(s.alchemy.stone, 0);
+});
+
+test('комбо кулаков действующего забега наносит урон через доступ к карте', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  s.stones = [1, 2].map(x => ({ block: 0, x, y: 1, hp: 1000, maxHp: 1000, kind: 'stone', neighbors: 0 }));
+  Object.assign(s, { block: 0, x: 1, y: 1, weapon: 'fists', fistComboUnlocked: true });
+  s.combos.fists = true;
+  s.comboCounts.fists = C.comboAttackCount - 1;
+  game.world.rebuild();
+  let areas = 0;
+  const damageArea = game.world.damageArea.bind(game.world);
+  game.world.damageArea = (...args) => { areas++; return damageArea(...args); };
+  game.strike(game.world.getStone(0, 1, 1));
+  assert.equal(areas, 1);
+  assert.ok(game.world.getStone(0, 1, 1).hp < 1000);
+  assert.ok(game.world.getStone(0, 2, 1).hp < 1000);
+});
+
+test('областные атаки оружия используют общие операции карты', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  s.stones = [1, 2].map(x => ({ block: 0, x, y: 1, hp: 1000, maxHp: 1000, kind: 'stone', neighbors: 0 }));
+  Object.assign(s, { block: 0, x: 1, y: 1 });
+  game.world.rebuild();
+  let areas = 0;
+  const damageArea = game.world.damageArea.bind(game.world);
+  game.world.damageArea = (...args) => { areas++; return damageArea(...args); };
+  const target = game.world.getStone(0, 1, 1);
+  const hit = () => {};
+  for (const weapon of ['pick', 'spear', 'bombarda']) game.weapons.strike(s, target, game.currentStones(), hit, weapon);
+  s.rangedWeapon = 'emitter';
+  game.weapons.strike(s, target, game.currentStones(), hit, 'ranged');
+  game.weapons.laser(s, game.currentStones(), 0.1, 1, hit);
+  assert.equal(areas, 5);
+});
+
+test('регенерация испытания добавляет камни через доступ к карте', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  Object.assign(s, { furthestBlock: 50, challenge1Completed: true });
+  s.alchemy.air = 1;
+  assert.equal(game.enterChallenge(3), true);
+  const removed = [...game.currentStones()].slice(0, 3);
+  for (const stone of removed) assert.equal(game.world.removeStone(stone), true);
+  let batches = 0;
+  const add = game.world.addStones.bind(game.world);
+  game.world.addStones = stones => { batches++; return add(stones); };
+  game.challenges.regenerate(1);
+  assert.equal(batches, 1);
+  for (const stone of removed) assert.ok(game.world.getStone(0, stone.x, stone.y));
+  assert.equal(game.world.stonesInBlock(0).length, s.size * s.size);
+});
+
+test('обработчик попаданий действующего забега заменяется независимо от оружия', () => {
+  const game = new PreInfinityGame();
+  const target = game.currentStones()[0];
+  const previous = target.hp;
+  const hits = [];
+  game.replaceCombat({ hit: (stone, amount, options) => hits.push({ stone, amount, options }) });
+  game.hit(target, 7, true, true, false, true, false, true, 0x123456);
+  assert.equal(target.hp, previous);
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0].stone, target);
+  assert.equal(hits[0].amount, 7);
+  assert.equal(hits[0].options.splash, true);
+  assert.equal(hits[0].options.flashColor, 0x123456);
+});
+
+test('боевой модуль шины управляет реальными попаданиями', () => {
+  const game = new PreInfinityGame();
+  const target = game.currentStones()[0];
+  target.hp = target.maxHp = 1000;
+  game.bus.setEnabled('combat', false);
+  game.hit(target, 10);
+  assert.equal(target.hp, 1000);
+  game.bus.setEnabled('combat', true);
+  game.hit(target, 10);
+  assert.ok(target.hp < 1000);
+  let calls = 0;
+  game.bus.replace({ id: 'combat', command: (_bus, command) => { calls++; return command.type === 'hit'; } });
+  const before = target.hp;
+  game.hit(target, 10);
+  assert.equal(calls, 1);
+  assert.equal(target.hp, before);
+});
+
+test('модуль движения шины управляет реальным персонажем и может быть заменён', () => {
+  const game = new PreInfinityGame();
+  Object.assign(game.state, { x: 0, y: 0 });
+  game.bus.setEnabled('movement', false);
+  game.move(10, 0, 1);
+  assert.equal(game.state.x, 0);
+  game.bus.setEnabled('movement', true);
+  game.move(10, 0, 1);
+  assert.ok(game.state.x > 0);
+  const view = game.bus.query('movement', { type: 'character', payload: 'main' });
+  view.position.x = 999;
+  assert.notEqual(game.state.x, 999);
+  game.bus.replace({ id: 'movement', command: () => { game.state.x = 42; return true; } });
+  game.move(10, 0, 1);
+  assert.equal(game.state.x, 42);
+});
+
+test('управляющее и автономное оружие работают как независимые модули', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  Object.assign(s, { block: 0, x: 1, y: 1, tutorial: 'done', auto: true, boundary: null, needleUnlocked: true, rangedWeapon: 'needle' });
+  s.stones = [{ block: 0, x: 1, y: 2, hp: 10000, maxHp: 10000, kind: 'stone', neighbors: 0 }];
+  game.world.rebuild();
+  const stone = game.currentStones()[0];
+  game.bus.setEnabled('autonomous-weapon', false);
+  s.challenge2Completed = true;
+  s.rangedBurstCharge = 3;
+  assert.equal(game.bus.invoke('weapons', { type: 'burst', payload: null }), false);
+  assert.equal(s.rangedBurstCharge, 3);
+  game.advance(1);
+  assert.ok(stone.hp < 10000);
+  assert.equal(s.projectiles.length, 0);
+  assert.equal(s.rangedClock, 0);
+  game.bus.setEnabled('controlled-weapon', false);
+  game.bus.setEnabled('autonomous-weapon', true);
+  const previous = stone.hp;
+  game.advance(1);
+  assert.ok(stone.hp < previous || s.projectiles.length > 0);
+  let calls = 0;
+  game.bus.replace({ id: 'controlled-weapon', command: (_bus, cmd) => { if (cmd.type === 'tick') calls++; return true; } });
+  game.bus.setEnabled('controlled-weapon', true);
+  game.advance(0.1);
+  assert.ok(calls > 0);
+});
+
+test('рывки оружия используют модуль движения и не ломают камни, когда он отключён', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  Object.assign(s, { block: 0, x: 0, y: 0, size: 2 });
+  s.stones = [0, 1].flatMap(y => [0, 1].map(x => ({ block: 0, x, y, hp: 10, maxHp: 10, kind: 'stone', neighbors: 0 })));
+  game.world.rebuild();
+  const target = game.world.getStone(0, 1, 1);
+  game.bus.setEnabled('movement', false);
+  assert.equal(game.pickDash(target), null);
+  assert.equal(game.spearDash(), null);
+  assert.equal(s.stones.length, 4);
+  assert.deepEqual([s.x, s.y], [0, 0]);
+  game.bus.setEnabled('movement', true);
+  assert.ok(game.pickDash(target));
+  assert.ok(s.x > 0 && s.y > 0);
+  assert.ok(game.spearDash());
+  assert.equal(s.stones.length, 3);
+});
+
+test('отказ сменного модуля движения не уничтожает камень при рывке копья', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  Object.assign(s, { block: 0, x: 0, y: 0, size: 1 });
+  s.stones = [{ block: 0, x: 0, y: 0, hp: 10, maxHp: 10, kind: 'stone', neighbors: 0 }];
+  game.world.rebuild();
+  game.bus.replace({ id: 'movement', command: () => false });
+  assert.equal(game.spearDash(), null);
+  assert.equal(s.stones.length, 1);
+  assert.equal(s.stones[0].hp, 10);
+});
+
+test('ввод и затухание буфера управляются сменным модулем', () => {
+  const game = new PreInfinityGame();
+  game.bus.setEnabled('input', false);
+  game.click();
+  assert.equal(game.state.clickBuffer, 0);
+  game.bus.setEnabled('input', true);
+  game.click();
+  assert.equal(game.state.clickBuffer, 1);
+  game.bus.setEnabled('input', false);
+  game.advance(0.1);
+  assert.equal(game.state.clickBuffer, 1);
+  game.bus.setEnabled('input', true);
+  game.advance(0.1);
+  assert.ok(game.state.clickBuffer < 1);
+  let clicks = 0;
+  game.bus.replace({ id: 'input', command: (_bus, command) => { if (command.type === 'click') clicks++; return true; } });
+  game.bus.invoke('gameplay', { type: 'click', payload: null });
+  assert.equal(clicks, 1);
+});
+
+test('снаряды и артефакт отдельно управляются через шину', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  Object.assign(s, { block: 0, x: 1, y: 1, tutorial: 'done', boundary: null, artifactUnlocked: true, artifactClock: C.artifactInterval - 0.05 });
+  s.stones = [{ block: 0, x: 1, y: 2, hp: 1000, maxHp: 1000, kind: 'stone', neighbors: 0 }];
+  s.projectiles = [{ block: 0, x: 1, y: 2, fromX: 1, fromY: 1, duration: 0.05, remaining: 0.05, damage: 10, pierce: 0 }];
+  game.world.rebuild();
+  game.bus.setEnabled('controlled-weapon', false);
+  game.bus.setEnabled('autonomous-weapon', false);
+  game.bus.setEnabled('projectiles', false);
+  game.bus.setEnabled('artifact', false);
+  game.advance(0.1);
+  assert.equal(s.projectiles[0].remaining, 0.05);
+  assert.equal(s.artifactClock, C.artifactInterval - 0.05);
+  assert.equal(s.stones[0].hp, 1000);
+  game.bus.setEnabled('projectiles', true);
+  game.advance(0.1);
+  assert.equal(s.projectiles.length, 0);
+  assert.ok(s.stones[0].hp < 1000);
+  const afterShot = s.stones[0].hp;
+  game.bus.setEnabled('artifact', true);
+  game.advance(0.1);
+  assert.ok(s.stones[0].hp < afterShot);
+});
+
+test('модуль испытаний управляет таймером и неудачей через игровой шаг', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  Object.assign(s, { challengeArena: true, challengeNumber: 1, challengeRemaining: 0.1, challengeWon: false, challengeFailed: false, boundary: null });
+  game.bus.setEnabled('challenges', false);
+  game.advance(0.2);
+  assert.equal(s.challengeRemaining, 0.1);
+  assert.equal(s.challengeFailed, false);
+  game.bus.setEnabled('challenges', true);
+  game.advance(0.2);
+  assert.equal(s.challengeRemaining, 0);
+  assert.equal(s.challengeFailed, true);
+  assert.equal(s.challengeWon, true);
+  assert.equal(game.challengeTransition.type, 'result');
+});
+
+test('прогрессия управляет боссом и границей как заменяемый модуль', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  Object.assign(s, { tutorial: 'done', bossRemaining: 10, boundary: 100000 });
+  game.bus.setEnabled('progression', false);
+  game.advance(0.2);
+  assert.equal(s.bossRemaining, 10);
+  assert.equal(s.boundary, 100000);
+  game.bus.setEnabled('progression', true);
+  game.advance(0.2);
+  assert.ok(s.bossRemaining < 10);
+  const commands = [];
+  game.bus.replace({ id: 'progression', command: (_bus, command) => { commands.push(command.type); return false; } });
+  const remaining = s.bossRemaining;
+  game.advance(0.1);
+  assert.equal(s.bossRemaining, remaining);
+  assert.ok(commands.includes('boss') && commands.includes('compress') && commands.includes('boundary'));
+});
+
+test('прогрессия сжимателя работает после открытия на следующих слоях', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  Object.assign(s, { block: 40, furthestBlock: 40, tutorial: 'done', boundary: null, spatialCompressorUnlocked: true, bossRemaining: 0 });
+  s.stones = [];
+  game.world.rebuild();
+  game.bus.setEnabled('progression', false);
+  game.advance(0.1);
+  assert.equal(s.block, 40);
+  game.bus.setEnabled('progression', true);
+  game.advance(0.1);
+  assert.equal(s.block, 41);
+  assert.ok(game.compressorEffect);
+});
+
+test('выключенная алхимия не расходует воздух и не применяет элементализацию или усиление Земли', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  Object.assign(s, { block: 0, x: 0, y: 0, tutorial: 'done', furthestBlock: 40, boundary: null });
+  s.stones = [1, 2, 3].map(x => ({ block: 0, x, y: 1, hp: 1000, maxHp: 1000, kind: 'stone', neighbors: 0 }));
+  Object.assign(s.alchemy, { elementalizationEnabled: true, pickEnabled: true, air: 10, earth: 1000 });
+  game.world.rebuild();
+  game.bus.setEnabled('controlled-weapon', false);
+  game.bus.setEnabled('autonomous-weapon', false);
+  game.bus.setEnabled('alchemy', false);
+  game.advance(0.1);
+  assert.equal(s.alchemy.air, 10);
+  const target = game.world.getStone(0, 1, 1);
+  game.hit(target, 10, true, true);
+  assert.equal(target.hp, 990);
+  const random = Math.random;
+  Math.random = () => 0;
+  try {
+    game.destroy(game.world.getStone(0, 2, 1));
+    assert.equal(s.alchemy.elementalStone, 0);
+    game.bus.setEnabled('alchemy', true);
+    game.destroy(game.world.getStone(0, 3, 1));
+    assert.equal(s.alchemy.elementalStone, 1);
+    game.advance(0.1);
+    assert.ok(s.alchemy.air < 10);
+    game.hit(target, 10, true, true);
+    assert.ok(target.hp < 980);
+  } finally { Math.random = random; }
+});
+
+test('подавление улучшений Спектра меняет скорость без потери покупок', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  Object.assign(s.spectraUpgrades, { twin: true, phaseStep: true });
+  const movement = new NearestStoneMovement();
+  const distance = () => { s.x = 0; s.y = 0; movement.move(s, 100, 0, 1); return s.x; };
+  assert.ok(Math.abs(game.weapons.speedMultiplier(s, 'fists') - 1.35) < 1e-9);
+  assert.ok(Math.abs(distance() - C.movementSpeed * 1.2) < 1e-9);
+  assert.equal(game.bus.invoke('upgrades', { type: 'set-suppression', payload: { source: 'challenge:spectra', tags: ['spectra'] } }), true);
+  assert.equal(game.weapons.speedMultiplier(s, 'fists'), 1);
+  assert.ok(Math.abs(distance() - C.movementSpeed) < 1e-9);
+  assert.equal(s.spectraUpgrades.twin, true);
+  assert.equal(s.spectraUpgrades.phaseStep, true);
+  assert.equal(game.bus.invoke('upgrades', { type: 'clear-suppression', payload: 'challenge:spectra' }), true);
+  assert.ok(Math.abs(game.weapons.speedMultiplier(s, 'fists') - 1.35) < 1e-9);
+});
+
+test('общая шина видит действующие ресурсы и команды без второй копии состояния', () => {
+  const game = new PreInfinityGame();
+  const bus = game.bus;
+  game.state.ore = 100;
+  game.state.alchemy.water = 100;
+  assert.equal(bus.read().resources.ore.amount, 100);
+  assert.equal(bus.read().resources.water.amount, 100);
+  assert.equal(bus.exchange({ ore: 20 }, { crystals: 1 }), true);
+  assert.equal(game.state.ore, 80);
+  assert.equal(game.state.crystals, 1);
+  game.state.alchemy = { ...game.state.alchemy, water: 40 };
+  assert.equal(bus.read().resources.water.amount, 40);
+  assert.equal(bus.invoke('gameplay', { type: 'click', payload: null }), true);
+  assert.equal(game.state.clickBuffer, 1);
+  bus.setPaused(true);
+  assert.equal(game.state.paused, true);
+  assert.equal(bus.invoke('gameplay', { type: 'click', payload: null }), false);
+  bus.tick(1);
+  assert.equal(game.state.clickBuffer, 1);
+  bus.setPaused(false);
+  assert.equal(game.state.paused, false);
+  const snapshot = bus.snapshot();
+  assert.equal(snapshot.resources.ore.amount, 80);
+  assert.equal(snapshot.moduleData.breach.ore, 80);
+  assert.ok(bus.listModules().some(module => module.id === 'challenges'));
+});
+
+test('игровые команды шины вызывают покупки, алхимию и выбор оружия', () => {
+  const game = new PreInfinityGame();
+  Object.assign(game.state, { ore: 10000, tutorial: 'auto', furthestBlock: 20 });
+  assert.equal(game.bus.invoke('upgrades', { type: 'buy', payload: 'auto' }), true);
+  assert.equal(game.state.auto, true);
+  assert.equal(game.bus.invoke('upgrades', { type: 'buy', payload: 'pick' }), true);
+  assert.equal(game.bus.invoke('weapons', { type: 'equip', payload: 'fists' }), true);
+  assert.equal(game.state.weapon, 'fists');
+  game.state.alchemy.water = 100;
+  assert.equal(game.bus.invoke('alchemy', { type: 'crystallize', payload: null }), true);
+  assert.equal(game.state.alchemy.water, 0);
+  assert.equal(game.state.crystals, 1);
+  game.bus.setPaused(true);
+  assert.equal(game.bus.invoke('weapons', { type: 'equip', payload: 'pick' }), false);
+  assert.equal(game.state.weapon, 'fists');
+});
+
+test('представление старого улучшения не выдаёт бесплатную покупку', () => {
+  const game = new PreInfinityGame();
+  const upgrade = createBreachStatUpgrades().find(item => item.id === 'melee');
+  assert.equal(upgrade.canBuy(game.bus), false);
+  assert.equal(upgrade.buy(game.bus), false);
+  assert.equal(game.state.fistLevel, 0);
+  game.state.ore = 100;
+  assert.equal(game.bus.invoke('upgrades', { type: 'buy', payload: 'melee' }), true);
+  assert.equal(game.state.fistLevel, 1);
+});
+
+test('алхимию в действующем забеге можно отключить и заменить через шину', () => {
+  const game = new PreInfinityGame();
+  game.state.furthestBlock = 20;
+  Object.assign(game.state.alchemy, { stone: 100, earth: 0, earthEnabled: true });
+  game.bus.setEnabled('alchemy', false);
+  game.advance(0.25);
+  assert.equal(game.state.alchemy.stone, 100);
+  game.bus.setEnabled('alchemy', true);
+  game.advance(0.25);
+  assert.equal(game.state.alchemy.stone, 90);
+  let ticks = 0;
+  game.bus.replace({ id: 'alchemy', command: (_bus, command) => { if (command.type !== 'tick') return false; ticks++; return true; } });
+  game.advance(0.1);
+  assert.ok(ticks > 0);
+  assert.equal(game.state.alchemy.stone, 90);
+});
+
+test('улучшения урона оружия проходят пайплайн и подавляются без потери уровней', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  Object.assign(s, { fistLevel: 3, pickLevel: 4, spearLevel: 2, needleLevel: 5, rangedLevel: 3, x: 2, y: 2 });
+  const damage = () => {
+    let value = 0;
+    const stone = { block: 0, x: 3, y: 2, hp: 100, maxHp: 100, kind: 'stone', neighbors: 0 };
+    game.weapons.strike(s, stone, [stone], (_stone, amount) => { value += amount; }, 'fists');
+    return value;
+  };
+  assert.equal(damage(), C.fistDamage + 3 * C.fistDamagePerLevel);
+  assert.equal(game.weapons.baseDamage(s, 'pick'), C.baseMeleeDamage + 4);
+  assert.equal(game.weapons.baseDamage(s, 'spear'), C.spearDamage + 2 * C.spearDamagePerLevel);
+  assert.equal(game.weapons.baseDamage(s, 'needle'), C.needleDamage + 5 * C.needleDamagePerLevel);
+  assert.equal(game.weapons.baseDamage(s, 'emitter'), C.rangedDamage + 3 * C.rangedDamagePerLevel);
+  assert.equal(game.bus.invoke('upgrades', { type: 'set-enabled', payload: { id: 'melee', enabled: false } }), true);
+  assert.equal(damage(), C.fistDamage);
+  assert.equal(s.fistLevel, 3);
+  assert.equal(game.bus.invoke('upgrades', { type: 'set-suppression', payload: { source: 'challenge:test', tags: ['ranged'] } }), true);
+  assert.equal(game.weapons.baseDamage(s, 'needle'), C.needleDamage);
+  assert.equal(game.weapons.baseDamage(s, 'emitter'), C.rangedDamage);
+  assert.equal(game.weapons.baseDamage(s, 'pick'), C.baseMeleeDamage + 4);
+  assert.equal(game.bus.invoke('upgrades', { type: 'clear-suppression', payload: 'challenge:test' }), true);
+  assert.equal(game.weapons.baseDamage(s, 'needle'), C.needleDamage + 5 * C.needleDamagePerLevel);
+  assert.equal(damage(), C.fistDamage);
+  s.cycleUpgrades.cycle1 = true;
+  s.cycleUpgrades.cycle5 = true;
+  assert.equal(damage(), C.fistDamage * 1.5);
+  assert.equal(game.weapons.damageMultiplier(s, 'ranged'), 1.5);
+  assert.equal(game.bus.invoke('upgrades', { type: 'set-suppression', payload: { source: 'challenge:cycle', tags: ['cycle'] } }), true);
+  assert.equal(damage(), C.fistDamage);
+  assert.equal(game.weapons.damageMultiplier(s, 'ranged'), 1);
+  assert.equal(s.cycleUpgrades.cycle1, true);
+  assert.equal(game.bus.invoke('upgrades', { type: 'clear-suppression', payload: 'challenge:cycle' }), true);
+  s.paused = true;
+  game.save();
+  const loaded = new PreInfinityGame();
+  assert.equal(loaded.state.fistLevel, 3);
+  assert.equal(loaded.weapons.baseDamage(loaded.state, 'fists'), C.fistDamage);
+  assert.equal(loaded.bus.invoke('upgrades', { type: 'set-enabled', payload: { id: 'melee', enabled: true } }), true);
+  assert.equal(loaded.weapons.baseDamage(loaded.state, 'fists'), C.fistDamage + 3 * C.fistDamagePerLevel);
+});
+
+test('подавление скорости действует на атаки, игломёт и передвижение', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  Object.assign(s, { fistSpeedLevel: 3, needleSpeedLevel: 2, movementLevel: 4, x: 0, y: 0, clickBuffer: 0 });
+  assert.equal(game.weapons.speedMultiplier(s, 'fists'), 1 + 3 * C.fistAttackSpeedPerLevel);
+  assert.equal(game.weapons.needleSpeedMultiplier(s), 1 + 2 * C.needleAttackSpeedPerLevel);
+  game.movement.move(s, 100, 0, 1);
+  assert.equal(s.x, C.movementSpeed * (1 + 4 * C.movementSpeedPerLevel));
+  assert.equal(game.bus.invoke('upgrades', { type: 'set-suppression', payload: { source: 'challenge:speed', tags: ['speed'] } }), true);
+  assert.equal(game.weapons.speedMultiplier(s, 'fists'), 1);
+  assert.equal(game.weapons.needleSpeedMultiplier(s), 1);
+  s.x = 0;
+  game.movement.move(s, 100, 0, 1);
+  assert.equal(s.x, C.movementSpeed);
+  assert.equal(s.movementLevel, 4);
+  assert.equal(game.bus.invoke('upgrades', { type: 'clear-suppression', payload: 'challenge:speed' }), true);
+  assert.equal(game.weapons.speedMultiplier(s, 'fists'), 1 + 3 * C.fistAttackSpeedPerLevel);
+});
+
+test('подавление площади и пробития влияет на реальные параметры вооружения', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  Object.assign(s, { pickReachLevel: 2, spearReachLevel: 3, emitterAreaLevel: 2, needlePierceLevel: 2 });
+  assert.equal(game.weapons.radius(s, 'pick'), C.pickRadius + 2 * C.pickRadiusPerLevel);
+  assert.equal(game.weapons.radius(s, 'spear'), C.spearRadius + 3 * C.spearRadiusPerLevel);
+  assert.equal(game.weapons.radius(s, 'emitter'), C.rangedBlastRadius + 2);
+  assert.equal(game.bus.invoke('upgrades', { type: 'set-suppression', payload: { source: 'challenge:areas', tags: ['area'], upgradeIds: ['needlePierce'] } }), true);
+  assert.equal(game.weapons.radius(s, 'pick'), C.pickRadius);
+  assert.equal(game.weapons.radius(s, 'spear'), C.spearRadius);
+  assert.equal(game.weapons.radius(s, 'emitter'), C.rangedBlastRadius);
+  assert.equal(game.launchNeedle(), true);
+  assert.equal(s.projectiles[0].pierce, 0);
+  s.projectiles = [];
+  assert.equal(game.bus.invoke('upgrades', { type: 'clear-suppression', payload: 'challenge:areas' }), true);
+  assert.equal(game.launchNeedle(), true);
+  assert.ok(s.projectiles[0].pierce > 0);
+  assert.equal(s.pickReachLevel, 2);
+});
+
+test('испытание подавляет механические эффекты цикла, не удаляя их покупку', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  Object.assign(s, { ore: 1e9, crystals: 100, pickUnlocked: true, pickReachLevel: C.pickReachMaxLevel, tutorial: 'done' });
+  s.cycleUpgrades.cycle3 = true;
+  s.cycleUpgrades.cycle9 = true;
+  assert.equal(game.bus.query('upgrades', { type: 'status', payload: 'cycle3' }).active, true);
+  assert.equal(game.buy('pickReach'), true);
+  const [first, second] = [...game.currentStones()];
+  first.kind = second.kind = 'stone';
+  game.destroy(first);
+  assert.equal(s.alchemy.stone, 1.1);
+  assert.equal(game.bus.invoke('upgrades', { type: 'set-suppression', payload: { source: 'challenge:cycle', tags: ['cycle'] } }), true);
+  assert.equal(game.buy('pickReach'), false);
+  game.destroy(second);
+  assert.equal(s.alchemy.stone, 2.1);
+  assert.equal(s.cycleUpgrades.cycle3, true);
+  assert.equal(game.bus.query('upgrades', { type: 'status', payload: 'cycle9' }).active, false);
+  assert.equal(game.bus.invoke('upgrades', { type: 'clear-suppression', payload: 'challenge:cycle' }), true);
+  assert.equal(game.buy('pickReach'), true);
+});
+
+test('мастерство оружия подавляется отдельно как особый эффект', () => {
+  const game = new PreInfinityGame();
+  Object.assign(game.state, { weapon: 'pick', pickLevel: 2 });
+  game.state.weaponMasteries.pick = true;
+  assert.equal(game.weapons.currentMeleeDamage(game.state), (C.baseMeleeDamage + 2) * C.weaponMasteries.pick.damageMultiplier);
+  assert.equal(game.bus.invoke('upgrades', { type: 'set-suppression', payload: { source: 'challenge:mastery', tags: ['mastery'] } }), true);
+  assert.equal(game.weapons.currentMeleeDamage(game.state), C.baseMeleeDamage + 2);
+  assert.equal(game.state.weaponMasteries.pick, true);
+  assert.equal(game.bus.invoke('upgrades', { type: 'clear-suppression', payload: 'challenge:mastery' }), true);
+  assert.equal(game.weapons.currentMeleeDamage(game.state), (C.baseMeleeDamage + 2) * C.weaponMasteries.pick.damageMultiplier);
+});
+
+test('уникальное пробитие и артефакт временно отключаются без потери покупки', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  Object.assign(s, { weapon: 'pick', pickInfinityEnchant: true, artifactUnlocked: true });
+  const stone = game.currentStones()[0];
+  Object.assign(stone, { kind: 'elemental', hp: 100, maxHp: 100 });
+  game.hitWithEquippedWeapon(stone, 100);
+  assert.equal(stone.hp, 100 * (1 - C.elementalPierceEfficiency));
+  stone.hp = 100;
+  assert.equal(game.bus.invoke('upgrades', { type: 'set-suppression', payload: { source: 'challenge:unique', upgradeIds: ['pickInfinity', 'artifact'] } }), true);
+  game.hitWithEquippedWeapon(stone, 100);
+  assert.equal(stone.hp, 100 - 100 / C.elementalMultiplier);
+  const clock = s.artifactClock;
+  game.advance(0.1);
+  assert.equal(s.artifactClock, clock);
+  assert.equal(s.pickInfinityEnchant, true);
+  assert.equal(s.artifactUnlocked, true);
+  assert.equal(game.bus.invoke('upgrades', { type: 'clear-suppression', payload: 'challenge:unique' }), true);
+  stone.hp = 100;
+  game.hitWithEquippedWeapon(stone, 100);
+  assert.equal(stone.hp, 100 * (1 - C.elementalPierceEfficiency));
+});
+
+test('подавление автоматики, брони и расширения сохраняет купленные улучшения', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  Object.assign(s, { auto: true, penetration: 1, expansion: 2, tutorial: 'done', x: 0, y: 0 });
+  assert.equal(game.bus.query('upgrades', { type: 'status', payload: 'auto' }).active, true);
+  assert.equal(game.resolveStat(0, 'weapon.armorPenetration'), 1);
+  assert.equal(game.resolveStat(0, 'world.expansion'), 2);
+  const stone = game.currentStones()[0];
+  Object.assign(stone, { kind: 'hard', hp: 100, maxHp: 100 });
+  game.hit(stone, 10, true, false, false, true);
+  assert.equal(stone.hp, 90);
+  assert.equal(game.bus.invoke('upgrades', { type: 'set-suppression', payload: { source: 'challenge:basics', upgradeIds: ['auto', 'penetration', 'expansion'] } }), true);
+  assert.equal(game.bus.query('upgrades', { type: 'status', payload: 'auto' }).active, false);
+  assert.equal(game.resolveStat(0, 'weapon.armorPenetration'), 0);
+  assert.equal(game.resolveStat(0, 'world.expansion'), 0);
+  stone.hp = 100;
+  game.hit(stone, 10, true, false, false, true);
+  assert.equal(stone.hp, 100 - 10 * C.hardSplashDamageMultiplier);
+  game.createMap();
+  assert.equal(s.size, C.blockSize);
+  assert.equal(s.auto, true);
+  assert.equal(s.penetration, 1);
+  assert.equal(s.expansion, 2);
+  assert.equal(game.bus.invoke('upgrades', { type: 'clear-suppression', payload: 'challenge:basics' }), true);
+  game.createMap();
+  assert.equal(s.size, C.blockSize + 2);
+});
+
+test('скоростное алхимическое улучшение подавляется без потери покупки', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  s.furthestBlock = 20;
+  Object.assign(s.alchemy, { stone: 100, earth: 0, earthEnabled: true });
+  s.alchemy.upgrades.earthSpeed = true;
+  game.advanceAlchemy(0.1);
+  assert.equal(s.alchemy.earth, 10);
+  assert.equal(game.bus.invoke('upgrades', { type: 'set-suppression', payload: { source: 'challenge:alchemy', upgradeIds: ['alchemy:earthSpeed'] } }), true);
+  game.advanceAlchemy(0.1);
+  assert.equal(s.alchemy.earth, 10);
+  game.advanceAlchemy(0.1);
+  assert.equal(s.alchemy.earth, 19);
+  assert.equal(s.alchemy.upgrades.earthSpeed, true);
+  assert.equal(game.bus.invoke('upgrades', { type: 'clear-suppression', payload: 'challenge:alchemy' }), true);
+  game.advanceAlchemy(0.1);
+  assert.equal(s.alchemy.earth, 27);
+});
+
+test('снижение лимита алхимии сохраняет запас и позволяет его расходовать', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  Object.assign(s, { furthestBlock: 20, challenge3Completed: true });
+  Object.assign(s.alchemy, { water: 280, earth: 500, air: 20, fire: 1 });
+  s.alchemy.upgrades.water1 = true;
+  assert.equal(game.alchemyLimit('water'), 300);
+  assert.equal(game.bus.invoke('upgrades', { type: 'set-suppression', payload: { source: 'challenge:capacity', upgradeIds: ['alchemy:water1'] } }), true);
+  assert.equal(game.alchemyLimit('water'), 100);
+  assert.equal(game.bus.read().resources.water.amount, 280);
+  game.advanceAlchemy(A.fireCycle.seconds);
+  assert.equal(s.alchemy.water, 280);
+  assert.equal(game.bus.exchange({ water: 50 }, {}), true);
+  assert.equal(s.alchemy.water, 230);
+  assert.equal(game.bus.exchange({}, { water: 1 }), false);
+  assert.equal(game.craftWater(), false);
+  assert.equal(s.alchemy.upgrades.water1, true);
+  assert.equal(game.bus.invoke('upgrades', { type: 'clear-suppression', payload: 'challenge:capacity' }), true);
+  assert.equal(game.alchemyLimit('water'), 300);
+  assert.equal(game.bus.exchange({}, { water: 1 }), true);
+});
+
+test('настроенные ограничения испытания автоматически снимаются при выходе', () => {
+  CHALLENGE_UPGRADE_RESTRICTIONS[1] = { all: false, upgradeIds: [], tags: ['damage'] };
+  try {
+    const game = new PreInfinityGame();
+    Object.assign(game.state, { furthestBlock: 50, fistLevel: 3, movementLevel: 2 });
+    assert.equal(game.bus.invoke('upgrades', { type: 'set-suppression', payload: { source: 'other', tags: ['speed'] } }), true);
+    assert.equal(game.enterChallenge1(), true);
+    assert.equal(game.weapons.baseDamage(game.state, 'fists'), C.fistDamage);
+    assert.deepEqual(game.bus.query('upgrades', { type: 'status', payload: 'melee' }).suppressedBy, ['challenge:1']);
+    game.state.paused = true;
+    game.save();
+    const loaded = new PreInfinityGame();
+    assert.equal(loaded.weapons.baseDamage(loaded.state, 'fists'), C.fistDamage);
+    assert.equal(loaded.leaveChallenge1(), true);
+    assert.equal(loaded.weapons.baseDamage(loaded.state, 'fists'), C.fistDamage + 3 * C.fistDamagePerLevel);
+    assert.equal(loaded.bus.query('upgrades', { type: 'status', payload: 'movement' }).active, false);
+    assert.equal(loaded.state.fistLevel, 3);
+  } finally { delete CHALLENGE_UPGRADE_RESTRICTIONS[1]; }
+});
+
+test('ошибка создания арены возвращает исходную карту и снимает ограничение', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  const originalStones = s.stones;
+  let rebuilds = 0, cleared = 0;
+  const challenge = new BreachChallenges({ state: s, unlocked: () => true, finalWallActive: () => false,
+    rebuildIndex: () => { if (++rebuilds === 1) throw new Error('map failure'); }, addStones: () => true, setTransition: () => {},
+    stoneHealth: () => 3, challengeHealth: () => 3, challengeKind: () => 'stone', random: () => 0,
+    applyUpgradeRestriction: () => true, clearUpgradeRestriction: () => { cleared++; } });
+  assert.throws(() => challenge.enter(1), /map failure/);
+  assert.equal(s.challengeArena, false);
+  assert.equal(s.stones, originalStones);
+  assert.equal(s.size, C.blockSize);
+  assert.equal(cleared, 1);
+  assert.equal(rebuilds, 2);
+});
+
+test('повторяемый магазин списывает ресурсы и соблюдает предел радиуса', () => {
+  const game = new PreInfinityGame();
+  const state = game.state;
+  Object.assign(state, { ore: 1000000, crystals: 100, pickUnlocked: true, furthestBlock: 30 });
+  assert.equal(game.buy('pickDamage'), true);
+  assert.equal(state.pickLevel, 1);
+  assert.equal(state.ore, 1000000 - C.pickDamageBaseCost);
+  state.pickReachLevel = C.pickReachMaxLevel;
+  assert.equal(game.buy('pickReach'), false);
+  state.cycleUpgrades.cycle3 = true;
+  assert.equal(game.buy('pickReach'), true);
+  assert.equal(state.pickReachLevel, C.pickReachMaxLevel + 1);
+});
+
+test('награда третьего испытания открывает огонь и не применяется повторно', () => {
+  const game = new PreInfinityGame();
+  game.completeChallenge(3);
+  assert.equal(game.state.challenge3Completed, true);
+  assert.equal(game.alchemyNodeUnlocked('fire'), true);
+  assert.equal(game.state.alchemy.earthEnabled, true);
+  assert.equal(game.state.alchemy.elementalizationEnabled, true);
+  const transition = game.challengeTransition;
+  game.completeChallenge(3);
+  assert.equal(game.challengeTransition, transition);
+});
+
+test('дальний поиск и стратегия движения могут быть заменены независимо', () => {
+  const game = new PreInfinityGame();
+  const weapon = new Weapons({ select: () => ({ x: 3, y: 4 }) });
+  assert.deepEqual(weapon.rangedTarget(game.state, []), { x: 3, y: 4 });
+  const movement = new NearestStoneMovement({ id: 'test', nextPosition: () => ({ x: 8, y: 9 }) });
+  movement.move(game.state, 1, 1, 0.1);
+  assert.deepEqual([game.state.x, game.state.y], [8, 9]);
+});
+
+test('добыча начисляет вес тяжёлого камня и элементальный камень из руды', () => {
+  const game = new PreInfinityGame();
+  game.state.tutorial = 'done';
+  const [hard, elemental] = [...game.currentStones()];
+  hard.kind = 'hard';
+  elemental.kind = 'elemental';
+  game.destroy(hard);
+  game.destroy(elemental);
+  assert.equal(game.state.alchemy.stone, 5);
+  assert.equal(game.state.alchemy.elementalStone, 1);
+});
+
+test('перенесённые атаки кулаков и кирки применяются к нужным камням', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  Object.assign(s, { x: 2, y: 2, fistLevel: 0, pickLevel: 0 });
+  const stones = [{ x: 3, y: 2 }, { x: 1, y: 2 }].map(point => ({ ...point, block: 0, hp: 10, maxHp: 10, kind: 'stone', neighbors: 0 }));
+  const weapons = new Weapons();
+  const hits = [];
+  const record = (stone, damage) => hits.push([stone.x, damage]);
+  weapons.strike(s, { x: 3, y: 2 }, stones, record, 'fists');
+  assert.deepEqual(hits, [[3, C.fistDamage]]);
+  hits.length = 0;
+  weapons.strike(s, { x: 3, y: 2 }, stones, record, 'pick');
+  assert.deepEqual(hits.map(hit => hit[0]), [3]);
+  assert.equal(hits[0][1], C.baseMeleeDamage);
+  weapons.replaceAttack('pick', { strike: context => context.hit(stones[1], 7) });
+  hits.length = 0;
+  weapons.strike(s, { x: 3, y: 2 }, stones, record, 'pick');
+  assert.deepEqual(hits, [[1, 7]]);
+});
+
+test('буфер кликов не изменяет перезарядку и затухает с течением времени', () => {
+  const game = new PreInfinityGame();
+  const state = game.state;
+  state.attackClock = 0.4;
+  game.click();
+  game.click();
+  assert.equal(state.attackClock, 0.4);
+  assert.equal(state.clickBuffer, 2);
+  game.advance(0.1);
+  assert.ok(state.clickBuffer < 2);
+  state.paused = true;
+  const before = state.clickBuffer;
+  game.click();
+  game.advance(1);
+  assert.equal(state.clickBuffer, before);
+});
+
+test('испытание создаёт отдельную арену и восстанавливает прежнюю карту при выходе', () => {
+  const game = new PreInfinityGame();
+  Object.assign(game.state, { furthestBlock: 50, challenge1Completed: true });
+  game.state.alchemy.air = 1;
+  const previousMap = game.state.stones;
+  assert.equal(game.enterChallenge3(), true);
+  assert.equal(game.state.size, 50);
+  assert.equal(game.state.stones.length, 2500);
+  assert.notEqual(game.state.stones, previousMap);
+  game.state.stones.splice(0, 300);
+  game.rebuildIndex();
+  game.advanceChallengeRegeneration(1);
+  assert.equal(game.state.stones.length, 2450);
+  assert.equal(game.leaveChallenge1(), true);
+  assert.equal(game.state.stones, previousMap);
+});
+
+test('неудача босса сохраняет ресурсы, а завершение цикла выдаёт очко и сбрасывает обычные', () => {
+  const game = new PreInfinityGame();
+  Object.assign(game.state, { tutorial: 'done', block: 9, furthestBlock: 20, ore: 500, crystals: 3 });
+  game.state.alchemy.earth = 100;
+  game.failBoss();
+  assert.equal(game.state.block, 5);
+  assert.equal(game.state.ore, 500);
+  assert.equal(game.state.alchemy.earth, 100);
+  game.completeRun();
+  assert.equal(game.state.breakthrough, 1);
+  assert.equal(game.state.ore, 0);
+  assert.equal(game.state.alchemy.earth, 0);
+  assert.equal(game.state.crystals, 3);
+});
+
+test('перенесённый расчёт алхимии применяется в игре с текущим открытием и паузой', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  s.furthestBlock = A.earthUnlockBlock + 1;
+  Object.assign(s.alchemy, { stone: 100, earth: 0, water: 0, elementalStone: 10, earthEnabled: true });
+  game.advanceAlchemy(A.earthRecipe.seconds);
+  assert.equal(s.alchemy.stone, 90);
+  assert.equal(s.alchemy.earth, 10);
+  assert.equal(game.craftWater(), true);
+  assert.equal(s.alchemy.earth, 9);
+  assert.equal(s.alchemy.elementalStone, 8);
+  assert.equal(s.alchemy.water, 1);
+  s.paused = true;
+  assert.equal(game.craftWater(), false);
+  assert.equal(s.alchemy.water, 1);
+});
+
+test('производство стихий учитывает скорость, ограничения и цикл огня', () => {
+  const game = new PreInfinityGame();
+  const s = game.state;
+  Object.assign(s, { furthestBlock: 20, challenge1Completed: true, challenge3Completed: true });
+  Object.assign(s.alchemy, { stone: 100, earth: 100, elementalStone: 100, water: 20, air: 20, fire: 1,
+    earthEnabled: true, waterEnabled: true, airProductionEnabled: true });
+  game.advanceAlchemy(2);
+  assert.deepEqual([s.alchemy.stone, s.alchemy.earth, s.alchemy.elementalStone, s.alchemy.water, s.alchemy.air], [37, 147, 68, 34, 21]);
+  game.advanceAlchemy(3);
+  assert.equal(s.alchemy.fireClock, 0);
+  assert.ok(s.alchemy.stone >= A.fireCycle.stonePerTick);
+  assert.ok(s.alchemy.elementalStone >= A.fireCycle.elementalPerTick);
+  assert.ok(s.alchemy.earth <= alchemyCapacity(s.alchemy, 'earth'));
+  assert.ok(s.alchemy.water <= alchemyCapacity(s.alchemy, 'water'));
+  assert.ok(s.alchemy.air <= alchemyCapacity(s.alchemy, 'air'));
+});
+
+test('заменяемый модуль алхимии вызывается через игровой интерфейс', () => {
+  const calls = [];
+  const game = new PreInfinityGame(host => ({
+    tick: seconds => calls.push([seconds, host.state.alchemy.water]),
+    craftWater: () => { host.state.alchemy.water += 2; return true; },
+  }));
+  assert.equal(game.craftWater(), true);
+  game.advanceAlchemy(0.25);
+  assert.deepEqual(calls, [[0.25, 2]]);
+});
+
+test('алхимические часы и ресурсы продолжаются после загрузки сохранения', () => {
+  const game = new PreInfinityGame();
+  Object.assign(game.state, { furthestBlock: 20, paused: true });
+  Object.assign(game.state.alchemy, { stone: 100, earth: 0, earthEnabled: true, earthClock: 0.1 });
+  game.save();
+  const loaded = new PreInfinityGame();
+  assert.equal(loaded.state.alchemy.earthClock, 0.1);
+  loaded.advanceAlchemy(0.1);
+  assert.equal(loaded.state.alchemy.stone, 90);
+  assert.equal(loaded.state.alchemy.earth, 10);
+});
 
 test('сброс удаляет только сохранение прорыва и начинает новую игру', () => {
   storage.set('probe-idle-save-v1', 'legacy');

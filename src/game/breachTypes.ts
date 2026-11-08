@@ -1,4 +1,5 @@
 import type { AlchemyState } from './alchemy';
+import type { UpgradeSuppression } from '../framework/core/model';
 
 export type StoneKind = 'stone' | 'hard' | 'elemental';
 export type WeaponId = 'fists' | 'pick' | 'spear' | 'ranged' | 'bombarda';
@@ -26,6 +27,8 @@ export interface Projectile {
 
 export interface BreachState {
   alchemy: AlchemyState;
+  frameworkUpgradeEnabled: Record<string, boolean>;
+  frameworkUpgradeSuppressions: Record<string, UpgradeSuppression>;
   version: 1;
   balanceVersion: number;
   paused: boolean;

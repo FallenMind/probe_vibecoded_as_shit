@@ -1,4 +1,5 @@
 import type { AlchemyState } from './alchemy';
+import type { UpgradeSuppression } from '../framework/core/model';
 
 export const CHALLENGE_RULES = {
   1: {
@@ -12,8 +13,8 @@ export const CHALLENGE_RULES = {
   2: {
     title: 'Скоростной прорыв', unlockBlock: 39,
     unlock: 'Открывается после прохождения 40-го квадрата.',
-    condition: 'Зачистить поле 12×12 с четырёхкратной прочностью породы за 30 секунд.',
-    size: 12, durationSeconds: 30, stoneMultiplier: 4,
+    condition: 'Зачистить поле 20×20 с четырёхкратной прочностью породы за 30 секунд.',
+    size: 20, durationSeconds: 30, stoneMultiplier: 4,
     attackSpeedMultiplier: 1.5, movementSpeedMultiplier: 1.35, weaponSplash: false,
     reward: 'Награда за прохождение сохраняется между забегами.',
   },
@@ -40,3 +41,6 @@ export const CHALLENGE_RULES = {
 
 export type ChallengeId = keyof typeof CHALLENGE_RULES;
 export type PlayableChallengeId = 1 | 2 | 3 | 4;
+
+/** По умолчанию существующие испытания не запрещают улучшения; правила можно задать по id. */
+export const CHALLENGE_UPGRADE_RESTRICTIONS: Partial<Record<PlayableChallengeId, Readonly<UpgradeSuppression>>> = {};

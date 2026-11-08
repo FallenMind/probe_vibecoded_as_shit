@@ -1,12 +1,39 @@
+import { isCycleUpgradeActive } from '../framework/adapters/breachCycleEffects';
 import { BREACH_CONFIG as C } from './breachConfig';
 import type { BreachState, RangedWeaponId, Stone, StoneKind, WeaponId } from './breachTypes';
 import { NearestStoneMovement } from './movement';
 import { Weapons } from './weapons';
 import { stoneNoise } from './stoneNoise';
-import { ALCHEMY_CONFIG as A, ALCHEMY_UPGRADES, alchemyCapacity, alchemyTickSeconds, freshAlchemyState } from './alchemy';
+import { ALCHEMY_CONFIG as A, ALCHEMY_UPGRADES, alchemyCapacity, freshAlchemyState } from './alchemy';
 import type { AlchemyNode, AlchemyResource, AlchemySwitch, AlchemyUpgrade } from './alchemy';
-import { CHALLENGE_RULES } from './challengeConfig';
-import { airProductionTickSeconds } from './alchemy';
+import { CHALLENGE_RULES, CHALLENGE_UPGRADE_RESTRICTIONS } from './challengeConfig';
+import { BreachAlchemyProduction } from '../framework/adapters/breachAlchemyProduction';
+import { BreachAlchemyEffects } from '../framework/adapters/breachAlchemyEffects';
+import type { BreachAlchemyHost } from '../framework/adapters/breachAlchemyProduction';
+import type { AlchemyProduction } from '../framework/alchemy/contracts';
+import { BreachWorldRules } from '../framework/world/breachWorld';
+import { BreachDamagePolicy } from '../framework/combat/breachDamage';
+import { BREACH_REPEATABLES, BreachRepeatableShop } from '../framework/adapters/breachRepeatableShop';
+import { BREACH_CHALLENGE_REWARDS, BreachChallengeRewards } from '../framework/adapters/breachChallengeRewards';
+import { BreachMiningRewards } from '../framework/adapters/breachMiningRewards';
+import { BreachNeedleProjectiles } from '../framework/adapters/breachNeedleProjectiles';
+import type { NeedleProjectiles } from '../framework/adapters/breachNeedleProjectiles';
+import { BreachIsolationArtifact } from '../framework/adapters/breachArtifact';
+import { BreachInputBuffer } from '../framework/adapters/breachInputBuffer';
+import { BreachChallenges } from '../framework/adapters/breachChallenges';
+import { BreachRunLifecycle } from '../framework/adapters/breachRunLifecycle';
+import { BreachProgression } from '../framework/adapters/breachProgression';
+import { BreachWorldAccess } from '../framework/adapters/breachWorldAccess';
+import { BreachCombat } from '../framework/adapters/breachCombat';
+import type { BreachHitProcessor } from '../framework/adapters/breachCombat';
+import { areaDistance, selectItemsInArea } from '../framework/world/area';
+import { BreachMeleeDash } from '../framework/adapters/weapons/dash';
+import { BreachAutonomousWeaponController, BreachControlledWeaponController } from '../framework/adapters/weapons/controllers';
+import type { BreachWeaponControllerHost } from '../framework/adapters/weapons/controllers';
+import { BreachRuntimeBus } from '../framework/adapters/breachRuntimeBus';
+import { clearUpgradeSuppression } from '../framework/upgrades/upgradeModule';
+import { isSpecialUpgradeActive } from '../framework/adapters/breachSpecialUpgrades';
+import { isAlchemyUpgradeActive } from '../framework/adapters/breachAlchemyUpgrades';
 
 const SAVE_KEY = 'pioneer-breach-v1';
 
@@ -68,48 +95,19 @@ export function specialCrystalCost(upgrade: string, level: number): number {
   return ['fistFinisher', 'needlePierce', 'emitterSpread', 'emitterArea', 'beamSpeed'].includes(upgrade) ? 1 + Math.floor(level / 2) : 0;
 }
 
-function stoneMaxHp(kind: StoneKind, block: number, applyBossScale = true): number {
-  let hp = kind === 'hard' ? C.hardStoneHp : kind === 'elemental' ? C.elementalStoneHp : 3;
-  const boss = isBossBlock(block);
-  const hpSteps = boss && !applyBossScale ? 0 : Math.floor(block / 2);
-  for (let step = 0; step < hpSteps; step++) hp += C.stoneHpLinearPerTwoBlocks + hp * C.stoneHpPercentPerTwoBlocks;
-  const wave = block + 1;
-  if (block >= C.bossEveryBlocks && block < C.blockCount - 1 && block % C.bossEveryBlocks < C.postBossCompensationBlocks) hp *= C.postBossHpMultiplier;
-  if (boss && applyBossScale) hp *= C.bossStoneHpMultiplier;
-  return hp;
-}
-
-function standardChallengeHp(kind: StoneKind, block: number): number {
-  let hp = kind === 'hard' ? C.hardStoneHp : kind === 'elemental' ? C.elementalStoneHp : 3;
-  for (let step = 0; step < Math.floor(block / 2); step++) hp += C.stoneHpLinearPerTwoBlocks + hp * C.stoneHpPercentPerTwoBlocks;
-  return hp;
-}
-
-function standardChallengeKind(block: number, x: number, y: number, size: number): StoneKind {
-  const worldY = block * size + size - 1 - y;
-  const nx = (x + C.mineralNoiseOffsetX) / C.mineralNoiseScale;
-  const ny = (worldY + C.mineralNoiseOffsetY) / C.mineralNoiseScale;
-  const ramp = Math.min(1, Math.max(0, (block - C.elementalMineralStartBlock) / (C.elementalMineralNormalBlock - C.elementalMineralStartBlock)));
-  const elementalThreshold = C.elementalMineralRampStartThreshold + (C.elementalMineralThreshold - C.elementalMineralRampStartThreshold) * ramp;
-  if (block >= C.elementalMineralStartBlock && stoneNoise(nx, ny, C.elementalMineralSeed) > elementalThreshold) return 'elemental';
-  if (block >= C.hardMineralStartBlock && stoneNoise(nx, ny, C.hardMineralSeed) > C.hardMineralThreshold) return 'hard';
-  return 'stone';
-}
-
-function isBossBlock(block: number): boolean {
-  const wave = block + 1;
-  return wave % C.bossEveryBlocks === 0 && wave < C.blockCount;
-}
-
-function oreReward(kind: StoneKind, block: number): number {
-  let reward = kind === 'elemental' ? 4 : kind === 'hard' ? 3 : 1;
-  for (let step = 0; step < Math.floor(block / 2); step++) reward += C.oreRewardLinearPerTwoBlocks + reward * C.oreRewardPercentPerTwoBlocks;
-  return Math.floor(reward);
-}
+const worldRules = new BreachWorldRules(C, stoneNoise);
+const damagePolicy = new BreachDamagePolicy({ hardSplashMultiplier: C.hardSplashDamageMultiplier, elementalResistance: C.elementalMultiplier,
+  elementalPierceEfficiency: C.elementalPierceEfficiency, earthPerStone: A.pickEarthPerStone, unoptimizedEarthMultiplier: 5,
+  earthDamageMultiplier: A.pickDamageMultiplier, stoneWeights: A.stoneWeight });
+const stoneMaxHp = (kind: StoneKind, block: number, applyBossScale = true): number => worldRules.stoneHealth(kind, block, applyBossScale);
+const standardChallengeHp = (kind: StoneKind, block: number): number => worldRules.challengeHealth(kind, block);
+const standardChallengeKind = (block: number, x: number, y: number, size: number): StoneKind => worldRules.stoneKind(block, x, y, size, { tutorial: false, bosses: false });
+const isBossBlock = (block: number): boolean => worldRules.isBoss(block);
+const oreReward = (kind: StoneKind, block: number): number => worldRules.oreReward(kind, block);
 
 function freshState(): BreachState {
   return {
-    version: 1, balanceVersion: 5, alchemy: freshAlchemyState(), paused: false, savedAt: Date.now(), tutorial: 'click', block: 0, furthestBlock: 0, size: C.blockSize,
+    version: 1, balanceVersion: 5, alchemy: freshAlchemyState(), frameworkUpgradeEnabled: {}, frameworkUpgradeSuppressions: {}, paused: false, savedAt: Date.now(), tutorial: 'click', block: 0, furthestBlock: 0, size: C.blockSize,
     stones: [], x: Math.floor(C.blockSize / 2), y: C.blockSize, target: null, shot: null,
     ore: 0, crystals: 0, breakthrough: 0, completions: 0, expansion: 0, auto: false, pickUnlocked: false, repeatablesUnlocked: true, attackClock: 0, penetration: 0,
     meleeLevel: 0, fistLevel: 0, pickLevel: 0, rangedLevel: 0, needleLevel: 0, rangedWeapon: 'needle', needleUnlocked: false,
@@ -133,16 +131,30 @@ function freshState(): BreachState {
 /** До Break Infinity: состояние и правила попытки, отдельно от её отображения. */
 export class PreInfinityGame {
   readonly state: BreachState;
+  readonly bus: BreachRuntimeBus;
+  private readonly repeatableShop = new BreachRepeatableShop(BREACH_REPEATABLES, upgradeOreCost, specialCrystalCost);
+  private readonly challengeRewards = new BreachChallengeRewards(BREACH_CHALLENGE_REWARDS);
+  private readonly alchemyProduction: AlchemyProduction;
+  private readonly alchemyEffects: BreachAlchemyEffects;
+  private readonly miningRewards: BreachMiningRewards;
+  private readonly needleProjectiles: NeedleProjectiles;
+  private readonly artifact: BreachIsolationArtifact;
+  private readonly challenges: BreachChallenges;
+  private readonly runLifecycle: BreachRunLifecycle;
+  readonly world: BreachWorldAccess;
+  private combat: BreachHitProcessor;
+  private readonly meleeDash: BreachMeleeDash;
+  private readonly clickBuffer = new BreachInputBuffer({ capacity: C.clickBufferCapacity, capacityUpgradeMultiplier: 1.1,
+    flatDrain: C.clickBufferDrain, fractionDrain: C.clickBufferDecay, heatThreshold: C.clickHeatThreshold,
+    clicksPerSecondForHeat: C.clickHeatClicksPerSecond, heatDecayPerSecond: C.clickHeatDecayPerSecond });
   private readonly movement = new NearestStoneMovement();
   readonly weapons = new Weapons();
-  private cells = new Map<string, Stone>();
-  private blocks: Stone[][] = [];
   resetEffect: { stones: Stone[]; x: number; y: number; size: number; elapsed: number } | null = null;
   compressorEffect: { x: number; y: number; elapsed: number } | null = null;
   finalWallEffect: { elapsed: number } | null = null;
   challengeTransition: { type: 'enter' | 'exit' | 'result'; number: 1 | 2 | 3 | 4; elapsed: number; success?: boolean } | null = null;
 
-  constructor() {
+  constructor(createAlchemyProduction: (host: BreachAlchemyHost) => AlchemyProduction = host => new BreachAlchemyProduction(host)) {
     let saved: BreachState | undefined;
     let migratedFistComboRadius = false;
     try {
@@ -153,8 +165,67 @@ export class PreInfinityGame {
       }
     } catch { /* Хранилище может быть недоступно. */ }
     this.state = saved ?? freshState();
+    this.meleeDash = new BreachMeleeDash({ state: this.state, stones: () => this.currentStones(),
+      spearRadius: () => this.weapons.radius(this.state, 'spear'),
+      clearBlocker: stone => this.hit(stone, stone.hp, false, false, true),
+      showDash: path => this.weapons.dash(path.fromX, path.fromY, path.toX, path.toY),
+      canDash: () => !this.state.paused && this.bus.isEnabled('movement'),
+      teleport: (x, y) => this.bus.invoke('movement', { type: 'teleport', payload: { characterId: 'main', x, y } }),
+    });
+    this.world = new BreachWorldAccess(this.state, C.blockCount);
+    this.combat = new BreachCombat({ state: this.state, canHit: stone => this.weapons.canHit(this.state, stone),
+      armorPenetration: () => this.resolveStat(0, 'weapon.armorPenetration'), earthUnlocked: () => this.bus.isEnabled('alchemy') && this.alchemyNodeUnlocked('earth'),
+      destroy: stone => this.destroy(stone),
+    }, damagePolicy);
+    this.runLifecycle = new BreachRunLifecycle({ state: this.state, createMap: () => this.createMap(),
+      beginResetEffect: () => { const s = this.state; this.resetEffect = { stones: this.currentStones().map(stone => ({ ...stone })), x: s.x, y: s.y, size: s.size, elapsed: 0 }; },
+      beginCompressorEffect: (x, y) => { this.compressorEffect = { x, y, elapsed: 0 }; },
+      stopBeam: () => this.weapons.stopBeam(), isBoss: isBossBlock, waterCapacity: () => this.alchemyLimit('water'),
+    });
+    this.challenges = new BreachChallenges({ state: this.state,
+      unlocked: number => number === 1 ? this.challenge1Unlocked : number === 2 ? this.challenge2Unlocked : number === 3 ? this.challenge3Unlocked : this.challenge4Unlocked,
+      finalWallActive: () => this.finalWallEffect !== null, rebuildIndex: () => this.rebuildIndex(), addStones: stones => this.world.addStones(stones),
+      setTransition: transition => { this.challengeTransition = transition; }, stoneHealth: stoneMaxHp,
+      challengeHealth: standardChallengeHp, challengeKind: standardChallengeKind, random: () => Math.random(),
+      applyUpgradeRestriction: number => {
+        const rule = CHALLENGE_UPGRADE_RESTRICTIONS[number];
+        return !rule || this.bus.invoke('upgrades', { type: 'set-suppression', payload: { source: `challenge:${number}`, ...rule } });
+      },
+      clearUpgradeRestriction: number => { clearUpgradeSuppression(this.bus, `challenge:${number}`); },
+    });
+    this.artifact = new BreachIsolationArtifact({ state: this.state,
+      nearbyStones: (block, radius) => this.world.nearbyBlocks(block, radius),
+      meleeDamage: () => this.weapons.currentMeleeDamage(this.state),
+      hit: (stone, damage) => this.hit(stone, damage, false, false, false, false, false, false, 0xb88cff),
+    }, { adjacentBlocks: C.artifactBlockRadius, damageMultiplier: C.artifactDamage,
+      isolationBonus: C.artifactIsolationBonus, neighborhoodSize: 24, isolationExponent: 4 });
+    this.needleProjectiles = new BreachNeedleProjectiles({ state: this.state,
+      stones: () => this.currentStones(), getStone: (block, x, y) => this.world.getStone(block, x, y),
+      fireActive: () => this.fireNeedleActive, canHit: stone => this.weapons.canHit(this.state, stone),
+      currentMeleeDamage: () => this.weapons.currentMeleeDamage(this.state),
+      baseDamage: () => this.weapons.baseDamage(this.state, 'needle'),
+      rangedMultiplier: () => this.weapons.damageMultiplier(this.state, 'ranged'),
+      pierceLevel: () => this.weapons.upgradeLevel('needlePierce', this.state.needlePierceLevel),
+      hit: (stone, damage, pierce) => this.hit(stone, damage, true, false, false, false, pierce, false, pierce ? 0xff762e : 0xffc66e),
+      random: () => Math.random(),
+    });
+    this.miningRewards = new BreachMiningRewards({ state: this.state, random: () => Math.random(),
+      fireUnlocked: () => this.alchemyNodeUnlocked('fire'), fireCapacity: () => this.alchemyLimit('fire'),
+      isBoss: isBossBlock, oreReward, remainingStones: () => this.currentStones().length,
+      completeChallenge3: () => this.completeChallenge(3),
+      elementalizationActive: () => this.bus.isEnabled('alchemy') && this.state.alchemy.elementalizationEnabled && this.state.alchemy.air > 0,
+    }, { stoneWeights: A.stoneWeight, elementalCrystalChance: C.elementalCrystalDropChance,
+      repeatableUnlockFraction: C.repeatableUnlockFraction, elementalizationChance: 0.5 });
+    this.alchemyProduction = createAlchemyProduction({
+      state: this.state,
+      isResetting: () => this.resetEffect !== null,
+      isUnlocked: node => this.alchemyNodeUnlocked(node),
+    });
+    this.alchemyEffects = new BreachAlchemyEffects({ state: this.state, crystallize: () => this.bus.invoke('alchemy', { type: 'crystallize', payload: null }) });
     if (saved) {
       const defaults = freshState();
+      saved.frameworkUpgradeEnabled ??= {};
+      saved.frameworkUpgradeSuppressions ??= {};
       for (const key of ['spearUnlocked', 'spearLevel', 'spearReachLevel', 'spearPierce', 'spearEnchant', 'spatialCompressorUnlocked', 'challenge1Completed', 'challenge2Completed', 'challenge3Completed', 'challengeNumber', 'challenge3Transmuted', 'challenge3WaterProduced', 'challenge3AirProduced', 'pickInfinityEnchant', 'fistUniqueUpgrade', 'emitterPierceUpgrade', 'needleFireUpgrade', 'rangedBurstCharge', 'fistComboUnlocked', 'fistComboRadiusLevel', 'pickDash', 'pickDashCharge', 'spearDashCharge', 'clickBuffer', 'clickHeat', 'clickWindowCount', 'clickWindowTime', 'challengeArena', 'challengeWon', 'challengeFailed', 'challengeRemaining', 'challengeReturnStones', 'challengeReturnSize', 'challengeReturnBlock', 'challengeReturnX', 'challengeReturnY', 'challengeReturnAlchemy', 'challengeReturnBossRemaining', 'challengeReturnEndChargeRemaining', 'alchemyHelpSeen', 'bossRemaining', 'earthOverloadRemaining', 'earthOverloadCounter', 'earthOverloadUsed', 'pickAlchemyOptimized', 'endChargeRemaining'] as const) {
         if (saved[key] === undefined) Object.assign(saved, { [key]: defaults[key] });
       }
@@ -247,6 +318,87 @@ export class PreInfinityGame {
       // Previous saves stored this clock in seconds; start the independent weapon rhythm fresh.
       if (!Number.isFinite(saved.rangedClock) || saved.rangedClock < 0 || saved.rangedClock >= 1) saved.rangedClock = 0;
     }
+    const weaponHost: BreachWeaponControllerHost = {
+      state: this.state, weapons: this.weapons, stones: () => this.currentStones(),
+      target: () => this.movement.target(this.state, this.currentStones()),
+      move: (x, y, seconds) => this.move(x, y, seconds),
+      strike: (target, spear, pick) => this.strike(target, spear, pick),
+      spearWindup: () => this.spearWindup(), spearDash: () => this.spearDash(), pickDash: target => this.pickDash(target),
+      launchNeedle: () => this.launchNeedle(),
+      laserHit: (stone, damage) => this.hit(stone, damage, true, false, false, true, isSpecialUpgradeActive(this.state, 'emitterPierce'), true, 0x51dce0),
+    };
+    const controlledWeapon = new BreachControlledWeaponController(weaponHost);
+    const autonomousWeapon = new BreachAutonomousWeaponController(weaponHost);
+    const progression = new BreachProgression({ state: this.state, remainingStones: () => this.currentStones().length,
+      isBoss: isBossBlock, move: (x, y, seconds) => this.move(x, y, seconds), stopBeam: () => this.weapons.stopBeam(),
+      rebuildIndex: () => this.rebuildIndex(), challengeKind: standardChallengeKind, challengeHealth: standardChallengeHp,
+      completeChallenge4: () => this.completeChallenge(4), completeRun: () => this.completeRun(),
+      fail: () => this.fail(), failBoss: () => this.failBoss(), compress: () => this.compressSpace(),
+    });
+    this.bus = new BreachRuntimeBus({ state: this.state, world: this.world, step: seconds => this.step(seconds),
+      hit: (stone, amount, options) => this.combat.hit(stone, amount, options),
+      move: (x, y, seconds) => this.movement.move(this.state, x, y, seconds),
+      teleport: (x, y) => { this.state.x = x; this.state.y = y; },
+      tickControlledWeapon: (seconds, target) => controlledWeapon.tick(seconds, target),
+      tickAutonomousWeapon: (seconds, target) => autonomousWeapon.tick(seconds, target),
+      tickProjectiles: seconds => { this.advanceProjectiles(seconds); this.advanceBurning(seconds); },
+      tickArtifact: seconds => this.artifact.advance(seconds),
+      click: () => this.applyClick(), tickInput: seconds => this.clickBuffer.tick(this.state, seconds),
+      buy: id => this.buy(id as Upgrade), buyCycle: id => this.buyCycleUpgrade(id), buyAlchemy: id => this.buyAlchemyUpgrade(id),
+      advanceAlchemy: seconds => this.advanceAlchemy(seconds),
+      advanceAutoCrystallize: seconds => this.alchemyEffects.autoCrystallize(seconds),
+      advanceAlchemyEffects: seconds => this.alchemyEffects.consumeElementalization(seconds),
+      buySpectra: id => this.buySpectraUpgrade(id), unlockSpectra: () => this.buySpectraUnlock(),
+      toggleAlchemy: name => this.toggleAlchemy(name), craftWater: () => this.craftWater(), crystallize: () => this.crystallizeWater(),
+      toggleAutoCrystallize: () => this.toggleAutoCrystallize(), overload: () => this.startEarthOverload(),
+      equip: weapon => {
+        const s = this.state;
+        const allowed = weapon === 'fists' || (weapon === 'pick' && s.pickUnlocked) || (weapon === 'spear' && s.spearUnlocked) || (weapon === 'bombarda' && s.bombardaUnlocked);
+        if (allowed) this.equip(weapon);
+        return allowed;
+      },
+      equipRanged: weapon => {
+        const allowed = weapon === 'emitter' ? this.state.rangedUnlocked : this.state.needleUnlocked;
+        if (allowed) this.equipRanged(weapon);
+        return allowed;
+      },
+      burst: () => this.fireRangedBurst(), toggleCombo: () => {
+        const s = this.state, weapon = s.weapon;
+        if ((weapon !== 'fists' && weapon !== 'pick' && weapon !== 'spear') || !(weapon === 'fists' ? isSpecialUpgradeActive(s, 'fistCombo') || (s.challengeArena && s.challengeNumber === 2) : s.challenge2Completed)) return false;
+        s.combos[weapon] = !s.combos[weapon];
+        return true;
+      },
+      enterChallenge: number => this.enterChallenge(number), leaveChallenge: () => this.leaveChallenge1(),
+      challengeModifier: kind => this.buyChallenge4Modifier(kind),
+      tickChallengeTimer: seconds => this.challenges.advanceTimer(seconds),
+      tickChallengeRegeneration: seconds => this.challenges.regenerate(seconds),
+      tickProgression: (kind, seconds) => {
+        if (kind === 'boss') return progression.tickBoss(seconds);
+        if (kind === 'compress') return progression.compressIfReady();
+        if (kind === 'cleared') return progression.tickCleared(seconds);
+        progression.tickBoundary(seconds); return false;
+      },
+    });
+    const resolveUpgradeStat = (base: number, key: string): number => {
+      const value = this.bus.query('upgrades', { type: 'stat', payload: { base, keys: [key] } });
+      return typeof value === 'number' && Number.isFinite(value) ? value : base;
+    };
+    this.movement.setUpgradeResolver(resolveUpgradeStat);
+    this.weapons.setAreaDamageResolver((state, stones, area, damage, hit) => {
+      if (stones === this.currentStones()) return this.world.damageArea(state.block, area, damage, hit);
+      // Внешние вызовы могут передавать собственную выборку, не принадлежащую карте забега.
+      for (const stone of selectItemsInArea(stones, area, item => item)) {
+        const amount = damage(stone, areaDistance(area, stone));
+        if (amount > 0) hit(stone, amount);
+      }
+    });
+    this.weapons.setUpgradeResolver(
+      resolveUpgradeStat,
+      id => {
+        const status = this.bus.query('upgrades', { type: 'status', payload: id }) as { active: boolean; level: number } | undefined;
+        return status?.active ? status.level : 0;
+      },
+    );
     if (saved && !saved.challengeArena && saved.size !== C.blockSize + saved.expansion) {
       // Старый размер карты несовместим с новой сеткой; постоянный прогресс сохраняется.
       this.state.tutorial = saved.tutorial === 'done' ? 'done' : saved.penetration ? 'third' : saved.auto ? 'second' : 'click';
@@ -263,29 +415,22 @@ export class PreInfinityGame {
     if (migratedFistComboRadius) this.save();
   }
 
-  private globalY(stone: Pick<Stone, 'block' | 'y'>): number {
-    return stone.block * this.state.size + this.state.size - 1 - stone.y;
+  private rebuildIndex(): void { this.world.rebuild(); }
+  currentStones(): readonly Stone[] { return this.world.stonesInBlock(this.state.block); }
+  private move(x: number, y: number, seconds: number): void {
+    this.bus.invoke('movement', { type: 'move', payload: { characterId: 'main', x, y, seconds } });
   }
-
-  private key(x: number, y: number): string { return `${x}:${y}`; }
-
-  private rebuildIndex(): void {
-    this.cells.clear();
-    this.blocks = Array.from({ length: C.blockCount }, () => []);
-    for (const stone of this.state.stones) {
-      this.cells.set(this.key(stone.x, this.globalY(stone)), stone);
-      this.blocks[stone.block].push(stone);
-    }
-    for (const stone of this.state.stones) {
-      stone.neighbors = 0;
-      const gy = this.globalY(stone);
-      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
-        if ((dx || dy) && this.cells.has(this.key(stone.x + dx, gy + dy))) stone.neighbors++;
-      }
-    }
+  private progressionStep(kind: 'boss' | 'compress' | 'cleared', seconds: number): boolean {
+    if (!this.bus.invoke('progression', { type: kind, payload: seconds })) return false;
+    return this.bus.query('progression', { type: 'stopped', payload: null }) === true;
   }
-
-  currentStones(): readonly Stone[] { return this.blocks[this.state.block] ?? []; }
+  alchemyLimit(resource: 'earth' | 'water' | 'air' | 'fire'): number {
+    return alchemyCapacity(this.state.alchemy, resource, id => isAlchemyUpgradeActive(this.state, id));
+  }
+  private resolveStat(base: number, key: string): number {
+    const value = this.bus.query('upgrades', { type: 'stat', payload: { base, keys: [key] } });
+    return typeof value === 'number' && Number.isFinite(value) ? value : base;
+  }
 
   get challenge1Unlocked(): boolean { return this.state.furthestBlock > CHALLENGE_RULES[1].unlockBlock; }
   get challenge2Unlocked(): boolean { return this.state.furthestBlock > CHALLENGE_RULES[2].unlockBlock; }
@@ -300,7 +445,7 @@ export class PreInfinityGame {
     return false;
   }
 
-  private get fireNeedleActive(): boolean { return this.alchemyNodeUnlocked('fire') && this.state.needleFireUpgrade; }
+  private get fireNeedleActive(): boolean { return this.alchemyNodeUnlocked('fire') && isSpecialUpgradeActive(this.state, 'needleFire'); }
 
   toggleAlchemy(name: AlchemySwitch): boolean {
     const s = this.state;
@@ -374,7 +519,7 @@ export class PreInfinityGame {
     if (!upgrade || s.paused || s.completions < 1 || s.cycleUpgrades[id] || s.breakthrough < upgrade.cost) return false;
     s.breakthrough -= upgrade.cost;
     s.cycleUpgrades[id] = true;
-    if (id === 'cycle7') s.alchemy.water = Math.min(alchemyCapacity(s.alchemy, 'water'), s.alchemy.water + 100);
+    if (id === 'cycle7') s.alchemy.water = Math.min(Math.max(this.alchemyLimit('water'), s.alchemy.water), s.alchemy.water + 100);
     if (id === 'cycle8') {
       for (const stone of s.stones) {
         if (!isBossBlock(stone.block)) continue;
@@ -398,77 +543,17 @@ export class PreInfinityGame {
   }
 
   craftWater(): boolean {
-    const s = this.state;
-    const a = s.alchemy;
-    const recipe = A.waterRecipe;
-    const amount = Math.min(Math.max(1, Math.floor(a.earth * recipe.fraction)), Math.floor(a.earth), Math.floor(a.elementalStone / recipe.elementalPerWater), alchemyCapacity(a, 'water') - a.water);
-    if (s.paused || this.resetEffect || !this.alchemyNodeUnlocked('water') || amount < 1) return false;
-    a.earth -= amount;
-    a.elementalStone -= amount * recipe.elementalPerWater;
-    a.water += amount;
-    if (s.challengeArena && s.challengeNumber === 3) s.challenge3WaterProduced = true;
-    return true;
+    return this.alchemyProduction.craftWater();
   }
 
   private advanceAlchemy(dt: number): void {
-    const a = this.state.alchemy;
-    const earth = A.earthRecipe;
-    if (a.earthEnabled && this.alchemyNodeUnlocked('earth') && a.stone >= 1 && a.earth < alchemyCapacity(a, 'earth')) {
-      a.earthClock += dt;
-      const seconds = alchemyTickSeconds(a, 'earth') * (this.state.cycleUpgrades.cycle11 ? 0.95 : 1);
-      while (a.earthClock + 1e-9 >= seconds && a.stone >= 1 && a.earth < alchemyCapacity(a, 'earth')) {
-        a.earthClock = Math.max(0, a.earthClock - seconds);
-        const amount = Math.min(Math.max(1, Math.floor(a.stone * earth.fraction)), a.stone, alchemyCapacity(a, 'earth') - a.earth);
-        a.stone -= amount; a.earth += amount;
-      }
-      if (a.stone < 1 || a.earth >= alchemyCapacity(a, 'earth')) a.earthClock = 0;
-    } else a.earthClock = 0;
-
-    if (a.waterEnabled && this.alchemyNodeUnlocked('water') && a.earth >= 1 && a.elementalStone >= A.waterRecipe.elementalPerWater && a.water < alchemyCapacity(a, 'water')) {
-      a.waterClock += dt;
-      const seconds = alchemyTickSeconds(a, 'water') * (this.state.cycleUpgrades.cycle11 ? 0.95 : 1);
-      while (a.waterClock + 1e-9 >= seconds) {
-        a.waterClock = Math.max(0, a.waterClock - seconds);
-        if (!this.craftWater()) { a.waterClock = 0; break; }
-      }
-    } else a.waterClock = 0;
-
-    if (a.airProductionEnabled && this.alchemyNodeUnlocked('air') && a.water >= A.airRecipe.waterPerAir && a.air < alchemyCapacity(a, 'air')) {
-      a.airProductionClock += dt;
-      const challengeAirBonus = this.state.challengeArena && this.state.challengeNumber === 3 ? 0.5 : 1;
-      const airTickSeconds = airProductionTickSeconds(a) * challengeAirBonus * (this.state.cycleUpgrades.cycle11 ? 0.95 : 1);
-      while (a.airProductionClock + 1e-9 >= airTickSeconds && a.water >= A.airRecipe.waterPerAir && a.air < alchemyCapacity(a, 'air')) {
-        a.airProductionClock = Math.max(0, a.airProductionClock - airTickSeconds);
-        a.water -= A.airRecipe.waterPerAir;
-        a.air = Math.min(alchemyCapacity(a, 'air'), a.air + 1);
-        if (this.state.challengeArena && this.state.challengeNumber === 3) this.state.challenge3AirProduced = true;
-      }
-    } else a.airProductionClock = 0;
-
-    if (this.alchemyNodeUnlocked('fire') && a.fire > 0) {
-      const cycleMultiplier = ALCHEMY_UPGRADES.reduce((multiplier, upgrade) =>
-        upgrade.fireCycleMultiplier && a.upgrades[upgrade.id] ? multiplier * upgrade.fireCycleMultiplier : multiplier, 1);
-      const seconds = A.fireCycle.seconds * cycleMultiplier;
-      const canFeedFire = a.earth >= A.fireCycle.earthCostPerTick && a.air >= A.fireCycle.airCostPerTick;
-      if (canFeedFire) a.fireClock += dt;
-      else a.fireClock = 0;
-      while (a.fireClock + 1e-9 >= seconds && a.earth >= A.fireCycle.earthCostPerTick && a.air >= A.fireCycle.airCostPerTick) {
-        a.fireClock = Math.max(0, a.fireClock - seconds);
-        a.earth -= A.fireCycle.earthCostPerTick;
-        a.air -= A.fireCycle.airCostPerTick;
-        a.stone += A.fireCycle.stonePerTick;
-        a.elementalStone += A.fireCycle.elementalPerTick;
-        a.earth = Math.min(alchemyCapacity(a, 'earth'), a.earth + A.fireCycle.earthPerTick);
-        a.water = Math.min(alchemyCapacity(a, 'water'), a.water + A.fireCycle.waterPerTick);
-        a.air = Math.min(alchemyCapacity(a, 'air'), a.air + A.fireCycle.airPerTick);
-      }
-    } else a.fireClock = 0;
+    this.alchemyProduction.tick(dt);
   }
 
   private createMap(): void {
     const s = this.state;
-    s.size = C.blockSize + s.expansion;
-    s.block = s.cycleUpgrades.cycle4 ? C.bossEveryBlocks : 0;
+    s.size = C.blockSize + this.resolveStat(0, 'world.expansion');
+    s.block = isCycleUpgradeActive(s, 'cycle4') ? C.bossEveryBlocks : 0;
     s.x = Math.floor(s.size / 2);
     s.y = s.size;
     s.target = null;
@@ -482,77 +567,15 @@ export class PreInfinityGame {
     s.endChargeRemaining = 0;
     this.finalWallEffect = null;
     s.comboCounts = { fists: 0, pick: 0, spear: 0 };
-    s.stones = [];
-    // Все квадраты — одна непрерывная прямоугольная карта в мировых координатах.
-    for (let worldY = 0; worldY < C.blockCount * s.size; worldY++) {
-      const block = Math.floor(worldY / s.size);
-      const y = s.size - 1 - (worldY % s.size);
-      for (let x = 0; x < s.size; x++) {
-        let kind: StoneKind = 'stone';
-        if (s.tutorial !== 'done' && block === 2) kind = 'hard';
-        else {
-          const nx = (x + C.mineralNoiseOffsetX) / C.mineralNoiseScale;
-          const ny = (worldY + C.mineralNoiseOffsetY) / C.mineralNoiseScale;
-          const elementalRamp = Math.min(1, Math.max(0, (block - C.elementalMineralStartBlock) / (C.elementalMineralNormalBlock - C.elementalMineralStartBlock)));
-          const elementalThreshold = C.elementalMineralRampStartThreshold + (C.elementalMineralThreshold - C.elementalMineralRampStartThreshold) * elementalRamp;
-          const bossWave = block + 1;
-          const elementalNoise = stoneNoise(nx, ny, C.elementalMineralSeed);
-          const bossElementalNoise = stoneNoise(nx, ny, C.elementalMineralSeed + 250);
-          if (bossWave === 25 && bossElementalNoise > C.elementalBossNoiseThreshold) kind = 'elemental';
-          else if (block >= C.elementalMineralStartBlock && elementalNoise > elementalThreshold) kind = 'elemental';
-          else if (block >= C.hardMineralStartBlock && stoneNoise(nx, ny, C.hardMineralSeed) > (isBossBlock(block) && bossWave < 25 ? C.bossHardNoiseThreshold : C.hardMineralThreshold)) kind = 'hard';
-        }
-        const hp = stoneMaxHp(kind, block, !s.cycleUpgrades.cycle8);
-        s.stones.push({ block, x, y, hp, maxHp: hp, kind, neighbors: 0 });
-      }
-    }
+    s.stones = worldRules.generate(s.size, s.tutorial !== 'done', !isCycleUpgradeActive(s, 'cycle8'));
     s.boundary = s.tutorial === 'done' ? C.blockCount * s.size + C.boundaryHeadStart : null;
     this.rebuildIndex();
   }
 
   private destroy(stone: Stone): void {
     const s = this.state;
-    const gy = this.globalY(stone);
-    if (!this.cells.delete(this.key(stone.x, gy))) return;
-    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
-      if (!dx && !dy) continue;
-      const neighbor = this.cells.get(this.key(stone.x + dx, gy + dy));
-      if (neighbor) neighbor.neighbors--;
-    }
-    const index = s.stones.indexOf(stone);
-    if (index !== -1) { s.stones[index] = s.stones[s.stones.length - 1]; s.stones.pop(); }
-    const block = this.blocks[stone.block];
-    const blockIndex = block.indexOf(stone);
-    if (blockIndex !== -1) { block[blockIndex] = block[block.length - 1]; block.pop(); }
-    if (s.challengeArena && s.challengeNumber === 3) {
-      const weight = A.stoneWeight[stone.kind];
-      const elementalized = stone.kind !== 'elemental' && s.alchemy.elementalizationEnabled && s.alchemy.air > 0 && Math.random() < 0.5;
-      s.alchemy.stone += weight - Number(elementalized);
-      if (stone.kind === 'elemental') s.alchemy.elementalStone += 1;
-      if (elementalized) {
-        s.alchemy.elementalStone += 1;
-        s.challenge3Transmuted++;
-        if (s.challenge3Transmuted >= 10000) this.completeChallenge(3);
-        s.message = `Элементальный камень: ${s.challenge3Transmuted} / 10000`;
-      }
-    } else if (!s.challengeArena) {
-      const weight = A.stoneWeight[stone.kind];
-      const elementalized = stone.kind !== 'elemental' && s.alchemy.elementalizationEnabled && s.alchemy.air > 0 && Math.random() < 0.5;
-      s.alchemy.stone += weight - Number(elementalized);
-      if (s.cycleUpgrades.cycle9) s.alchemy.stone += weight * 0.1;
-      if (stone.kind === 'elemental') s.alchemy.elementalStone += 1;
-      if (stone.kind === 'elemental' && this.alchemyNodeUnlocked('fire')) s.alchemy.fire = Math.min(alchemyCapacity(s.alchemy, 'fire'), s.alchemy.fire + 1);
-      if (elementalized) s.alchemy.elementalStone += 1;
-      if (s.earthOverloadRemaining > 0 && ++s.earthOverloadCounter % 2 === 0) s.alchemy.elementalStone += 1;
-      if (stone.kind === 'elemental' && Math.random() < C.elementalCrystalDropChance) {
-        s.crystals++;
-        s.message = 'Элементальная руда принесла кристалл.';
-      }
-      const oreMultiplier = 1 + (s.cycleUpgrades.cycle13 && isBossBlock(stone.block) ? 1 : 0);
-      s.ore += oreReward(stone.kind, stone.block) * oreMultiplier;
-      if (stone.block === s.block && this.currentStones().length <= s.size * s.size * (1 - C.repeatableUnlockFraction)) s.repeatablesUnlocked = true;
-      if (s.tutorial === 'click') { s.ore += 2; s.tutorial = 'auto'; }
-    }
+    if (!this.world.removeStone(stone)) return;
+    this.miningRewards.award(stone);
     if (!s.challengeArena && s.bossRemaining > 0 && this.currentStones().length === 0) {
       s.bossRemaining = 0;
       s.message = `Босс ${s.block + 1}-го квадрата повержен.`;
@@ -562,51 +585,16 @@ export class PreInfinityGame {
 
   private completeChallenge(number: 1 | 2 | 3 | 4): void {
     const s = this.state;
-    if (s.challengeWon) return;
-    s.challengeWon = true;
-    s.challengeFailed = false;
-    s.challengeRemaining = 0;
-    if (number === 1) {
-      s.challenge1Completed = true;
-      s.message = 'Challenge 1 пройден: открыт Воздух и уникальные улучшения.';
-    } else if (number === 2) {
-      s.challenge2Completed = true;
-      s.message = 'Challenge 2 пройден.';
-    } else if (number === 3) {
-      s.challenge3Completed = true;
-      s.alchemy.earthEnabled = true;
-      s.alchemy.waterEnabled = true;
-      s.alchemy.airProductionEnabled = true;
-      s.alchemy.elementalizationEnabled = true;
-      s.message = 'Тепловой шифр разгадан: открыт Огонь.';
-    }
-    if (number === 4) {
-      s.challenge4Completed = true;
-      s.message = 'Теорема существования доказана. Награда: ???';
-    }
+    if (!this.challengeRewards.complete(s, number)) return;
     this.challengeTransition = { type: 'result', number, elapsed: 0, success: true };
   }
 
   private hit(stone: Stone, amount: number, weaponHit = true, earthHit = false, ignoreArmor = false, area = false, windPierce = false, splash = area, flashColor = 0xe7c37c): void {
-    const s = this.state;
-    if (s.challengeArena && s.challengeNumber === 4) amount *= s.challenge4DamageMultiplier;
-    amount *= 1 + (s.cycleUpgrades.cycle10 && stone.kind === 'hard' ? 0.1 : 0) + (s.cycleUpgrades.cycle14 && stone.kind === 'elemental' ? 0.1 : 0) + (s.spectraUpgrades.spectrumDrive ? 0.2 : 0);
-    if (!ignoreArmor && !this.weapons.canHit(s, stone)) return;
-    const pickCostMultiplier = s.pickAlchemyOptimized ? 1 : 5;
-    const earthCost = A.pickEarthPerStone * pickCostMultiplier * A.stoneWeight[stone.kind];
-    const empowered = earthHit && s.alchemy.pickEnabled && this.alchemyNodeUnlocked('earth') && s.alchemy.earth >= earthCost;
-    if (empowered) amount *= A.pickDamageMultiplier;
-    if (stone.kind === 'hard' && splash && s.penetration <= 0) amount *= C.hardSplashDamageMultiplier;
-    if (weaponHit && stone.kind === 'elemental') {
-      amount *= empowered ? 1 : windPierce ? C.elementalPierceEfficiency : 1 / C.elementalMultiplier;
-    }
-    if (amount > 0) { stone.damageFlash = 1; stone.damageFlashColor = flashColor; }
-    stone.hp -= amount;
-    if (stone.hp <= 0) {
-      if (empowered) s.alchemy.earth -= earthCost;
-      this.destroy(stone);
-    }
+    this.bus.invoke('combat', { type: 'hit', payload: { stone, amount,
+      options: { weaponHit, earthHit, ignoreArmor, splash, elementalPierce: windPierce, flashColor } } });
   }
+
+  replaceCombat(combat: BreachHitProcessor): void { this.combat = combat; }
 
   private strike(target: Stone, spearDashPath?: { fromX: number; fromY: number; toX: number; toY: number } | null, pickDashPath?: { fromX: number; fromY: number; toX: number; toY: number } | null): void {
     const s = this.state;
@@ -617,278 +605,42 @@ export class PreInfinityGame {
 
   private hitWithEquippedWeapon(stone: Stone, damage: number, area = false, splash = area): void {
     const s = this.state;
-    const elementalPierce = stone.kind === 'elemental' && ((s.weapon === 'spear' && s.spearEnchant) || (s.weapon === 'pick' && s.pickInfinityEnchant) || (s.weapon === 'ranged' && s.rangedWeapon === 'emitter' && s.emitterPierceUpgrade));
+    const elementalPierce = stone.kind === 'elemental' && ((s.weapon === 'spear' && isSpecialUpgradeActive(s, 'spearEnchant')) || (s.weapon === 'pick' && isSpecialUpgradeActive(s, 'pickInfinity')) || (s.weapon === 'ranged' && s.rangedWeapon === 'emitter' && isSpecialUpgradeActive(s, 'emitterPierce')));
     const flashColor = s.weapon === 'spear' ? 0x64d7cc : s.weapon === 'pick' ? 0xf0a84c : s.weapon === 'fists' ? 0xf4d189 : s.rangedWeapon === 'emitter' ? 0x5ce1e4 : 0xffbd68;
-    this.hit(stone, damage, true, s.weapon === 'pick' || s.weapon === 'fists' || s.weapon === 'spear', s.weapon === 'spear' && area && s.spearPierce && stone.kind !== 'elemental', area, elementalPierce, splash, flashColor);
+    this.hit(stone, damage, true, s.weapon === 'pick' || s.weapon === 'fists' || s.weapon === 'spear', s.weapon === 'spear' && area && isSpecialUpgradeActive(s, 'spearPierce') && stone.kind !== 'elemental', area, elementalPierce, splash, flashColor);
   }
 
   private spearWindup(): void {
     this.weapons.spearWindup(this.state, this.currentStones(), (stone, damage) => this.hitWithEquippedWeapon(stone, damage, true, true));
   }
 
-  click(): void {
+  private applyClick(): boolean {
     const s = this.state;
-    if (s.paused || this.resetEffect) return;
-    s.clickBuffer = Math.min(C.clickBufferCapacity * (s.cycleUpgrades.cycle15 ? 1.1 : 1), s.clickBuffer + 1);
-    s.clickWindowCount++;
-  }
-
-  private spearDash(): { fromX: number; fromY: number; toX: number; toY: number } | null {
-    const s = this.state;
-    const stones = this.currentStones();
-    const occupied = new Set(stones.map(stone => `${stone.x}:${stone.y}`));
-    const radius = Math.min(C.spearRadiusMax, C.spearRadius + s.spearReachLevel * C.spearRadiusPerLevel);
-    let destination: { x: number; y: number } | null = null;
-    let bestScore = -1;
-    let bestTravel = Infinity;
-    for (let y = 0; y < s.size; y++) for (let x = 0; x < s.size; x++) {
-      const travel = Math.hypot(x - s.x, y - s.y);
-      if (travel > C.spearDashRange || occupied.has(`${x}:${y}`)) continue;
-      const hitSet = new Set<Stone>();
-      const dx = x - s.x, dy = y - s.y;
-      const length = Math.hypot(dx, dy);
-      for (const stone of stones) {
-        if (Math.hypot(stone.x - x, stone.y - y) <= radius) hitSet.add(stone);
-        if (s.spearEnchant && length > 0) {
-          const rx = stone.x - s.x, ry = stone.y - s.y;
-          const along = (rx * dx + ry * dy) / length;
-          const across = Math.abs(rx * dy - ry * dx) / length;
-          if (along >= 0 && along <= length && across <= 0.75) hitSet.add(stone);
-        }
-      }
-      if (hitSet.size > bestScore || (hitSet.size === bestScore && travel < bestTravel)) {
-        destination = { x, y }; bestScore = hitSet.size; bestTravel = travel;
-      }
-    }
-    if (!destination) {
-      const blocker = stones.filter(stone => Math.hypot(stone.x - s.x, stone.y - s.y) <= C.spearDashRange)
-        .sort((a, b) => Math.hypot(a.x - s.x, a.y - s.y) - Math.hypot(b.x - s.x, b.y - s.y))[0];
-      if (!blocker) return null;
-      destination = { x: blocker.x, y: blocker.y };
-      this.hit(blocker, blocker.hp, false, false, true);
-    }
-    const path = { fromX: s.x, fromY: s.y, toX: destination.x, toY: destination.y };
-    this.weapons.dash(path.fromX, path.fromY, path.toX, path.toY);
-    s.x = destination.x; s.y = destination.y;
-    return path;
-  }
-  private pickDash(target: Stone): { fromX: number; fromY: number; toX: number; toY: number } {
-    const s = this.state;
-    const dx = target.x - s.x, dy = target.y - s.y;
-    const distance = Math.hypot(dx, dy);
-    const fromX = s.x, fromY = s.y;
-    if (distance > 0) {
-      const dash = Math.min(C.pickDashRange, distance);
-      s.x += dx / distance * dash;
-      s.y += dy / distance * dash;
-      this.weapons.dash(fromX, fromY, s.x, s.y);
-    }
-    s.pickDash = true;
-    return { fromX, fromY, toX: s.x, toY: s.y };
-  }
-
-  private launchNeedle(followTarget?: Stone): boolean {
-    const s = this.state;
-    const damage = (C.needleDamage + s.needleLevel * C.needleDamagePerLevel) * (s.cycleUpgrades.cycle5 ? 1.5 : 1);
-    let best: Stone | undefined;
-    let remainingHp = 0;
-    const candidates: { stone: Stone; remaining: number }[] = [];
-    for (const stone of this.currentStones()) {
-      if (followTarget && stone !== followTarget) continue;
-      if (!followTarget && this.fireNeedleActive && stone.ignited) continue;
-      if (!this.weapons.canHit(s, stone)) continue;
-      const factor = stone.kind === 'elemental' ? 1 / C.elementalMultiplier : 1;
-      let reserved = 0;
-      for (const shot of s.projectiles) {
-        if (shot.block !== stone.block || shot.x !== stone.x) continue;
-        if (shot.y === stone.y) reserved += shot.damage * factor;
-        else if (shot.y - 1 === stone.y) reserved += shot.pierce * factor;
-      }
-      const available = stone.hp - reserved;
-      if (available <= 1e-8) continue;
-      candidates.push({ stone, remaining: available / factor });
-      if (!best || stone.y > best.y || (stone.y === best.y && Math.abs(stone.x - s.x) < Math.abs(best.x - s.x))) {
-        best = stone; remainingHp = available / factor;
-      }
-    }
-    if (!best) return false;
-    if (!followTarget) {
-      const spread = candidates.filter(candidate => Math.hypot(candidate.stone.x - best!.x, candidate.stone.y - best!.y) <= C.needleSpreadRadius);
-      const chosen = spread[Math.floor(Math.random() * spread.length)];
-      best = chosen.stone; remainingHp = chosen.remaining;
-    }
-    const shotDamage = Math.min(damage, remainingHp);
-    const duration = Math.max(0.01, Math.hypot(best.x - s.x, best.y - s.y) / C.needleProjectileSpeed);
-    s.projectiles.push({ block: s.block, x: best.x, y: best.y, fromX: s.x, fromY: s.y, duration, remaining: duration,
-      damage: shotDamage, pierce: shotDamage * Math.min(1, s.needlePierceLevel * C.needlePierceBonus), followUp: !!followTarget, elementalPierce: this.fireNeedleActive });
-    if (!followTarget && this.fireNeedleActive) best.ignited = true;
+    if (s.paused || this.resetEffect) return false;
+    this.clickBuffer.click(s);
     return true;
   }
 
-  private advanceProjectiles(dt: number): void {
-    const s = this.state;
-    const followUps = s.needleFollowUps;
-    s.needleFollowUps = [];
-    for (const follow of followUps) {
-      follow.remaining -= dt;
-      if (follow.remaining > 1e-9) { s.needleFollowUps.push(follow); continue; }
-      if (follow.block !== s.block) continue;
-      const survivor = this.cells.get(this.key(follow.x, this.globalY(follow)));
-      if (survivor) this.launchNeedle(survivor);
-    }
-    const pending = s.projectiles;
-    s.projectiles = [];
-    for (const shot of pending) {
-      shot.remaining -= dt;
-      if (shot.remaining > 0) { s.projectiles.push(shot); continue; }
-      if (shot.block !== s.block) continue;
-      const target = this.cells.get(this.key(shot.x, this.globalY({ block: shot.block, y: shot.y })));
-      if (target) this.hit(target, shot.damage, true, false, false, false, !!shot.elementalPierce, false, shot.elementalPierce ? 0xff762e : 0xffc66e);
-      if (target && target.hp > 0 && shot.elementalPierce) {
-        if (!target.burning) target.burnTickRemaining = C.needleBurnTickSeconds;
-        target.burning = true;
-      }
-      if (target && target.hp > 0 && !shot.followUp && !this.fireNeedleActive) s.needleFollowUps.push({ block: shot.block, x: shot.x, y: shot.y, remaining: Math.max(0, C.needleFollowUpDelay + shot.remaining) });
-      const behind = shot.y > 0 ? this.cells.get(this.key(shot.x, this.globalY({ block: shot.block, y: shot.y - 1 }))) : undefined;
-      if (behind && shot.pierce > 0) {
-        this.hit(behind, shot.pierce, true, false, false, false, !!shot.elementalPierce, false, shot.elementalPierce ? 0xff762e : 0xffc66e);
-        if (behind.hp > 0 && shot.elementalPierce) {
-          behind.ignited = true;
-          if (!behind.burning) behind.burnTickRemaining = C.needleBurnTickSeconds;
-          behind.burning = true;
-        }
-      }
-    }
-  }
+  click(): void { this.bus.invoke('input', { type: 'click', payload: null }); }
 
-  private advanceBurning(dt: number): void {
-    // Ignition has no duration: the burn stops only when the rock is destroyed or removed.
-    for (const stone of [...this.state.stones]) {
-      if (!stone.burning) continue;
-      stone.burnTickRemaining = (stone.burnTickRemaining ?? C.needleBurnTickSeconds) - dt;
-      while (stone.burnTickRemaining <= 1e-9 && stone.hp > 0) {
-        stone.burnTickRemaining += C.needleBurnTickSeconds;
-        const percentDamage = stone.maxHp * C.needleBurnDamagePercentPerTick;
-        const cappedDamage = Math.min(percentDamage, this.weapons.currentMeleeDamage(this.state) * 0.5);
-        this.hit(stone, cappedDamage, true, false, false, false, true, false, 0xff762e);
-      }
-    }
-  }
+  private spearDash(): { fromX: number; fromY: number; toX: number; toY: number } | null { return this.meleeDash.spear(); }
+  private pickDash(target: Stone): { fromX: number; fromY: number; toX: number; toY: number } | null { return this.meleeDash.pick(target); }
+
+  private launchNeedle(followTarget?: Stone): boolean { return this.needleProjectiles.launch(followTarget); }
+  private advanceProjectiles(dt: number): void { this.needleProjectiles.tick(dt); }
+  private advanceBurning(dt: number): void { this.needleProjectiles.tickBurning(dt); }
 
   private artifactTick(): void {
-    const s = this.state;
-    if (s.challengeArena && s.challengeNumber === 2) return;
-    // Сначала рассчитываем все попадания, затем удаляем камни: порядок не влияет на изоляцию.
-    const nearby = this.blocks.slice(Math.max(0, s.block - C.artifactBlockRadius), Math.min(C.blockCount, s.block + C.artifactBlockRadius + 1)).flat();
-    const hits = nearby.map((stone) => ({ stone, damage: C.artifactDamage * this.weapons.currentMeleeDamage(s) * (1 + C.artifactIsolationBonus * (1 - stone.neighbors / 24) ** 4) }));
-    for (const { stone, damage } of hits) this.hit(stone, damage, false, false, false, false, false, false, 0xb88cff);
+    this.artifact.tick();
   }
 
-  private resetOrdinaryResources(): void {
-    const s = this.state;
-    s.ore = 0;
-    s.reagent = 0;
-    s.reagentClock = 0;
-    s.charges = 0;
-    s.buffRemaining = 0;
-    Object.assign(s.alchemy, { stone: 0, elementalStone: 0, earth: 0, water: 0, air: 0, fire: 0, earthClock: 0, waterClock: 0, fireClock: 0 });
-    s.earthOverloadRemaining = 0;
-    s.earthOverloadCounter = 0;
-    s.earthOverloadUsed = false;
-  }
+  private fail(): void { this.runLifecycle.fail(); }
+  private failBoss(): void { this.runLifecycle.failBoss(); }
+  private completeRun(): void { this.runLifecycle.complete(); }
 
-  private fail(): void {
-    const s = this.state;
-    this.resetEffect = { stones: this.currentStones().map(stone => ({ ...stone })), x: s.x, y: s.y, size: s.size, elapsed: 0 };
-    this.weapons.stopBeam();
-    this.resetOrdinaryResources();
-    s.message = 'Граница настигла первопроходца. Улучшения и редкие ресурсы сохранены.';
-    this.createMap();
-  }
+  private advanceChallengeRegeneration(dt: number): void { this.bus.invoke('challenges', { type: 'regenerate', payload: dt }); }
 
-  private failBoss(): void {
-    const s = this.state;
-    const failedWave = s.block + 1;
-    const previousBossWave = Math.floor((failedWave - 1) / C.bossEveryBlocks) * C.bossEveryBlocks;
-    const restartBlock = previousBossWave;
-    const furthestBlock = s.furthestBlock;
-    this.resetEffect = { stones: this.currentStones().map(stone => ({ ...stone })), x: s.x, y: s.y, size: s.size, elapsed: 0 };
-    this.weapons.stopBeam();
-    this.createMap();
-    s.block = restartBlock;
-    s.furthestBlock = furthestBlock;
-    s.x = Math.floor(s.size / 2);
-    s.y = s.size - 0.5;
-    s.target = null;
-    s.bossRemaining = 0;
-    s.boundary = s.tutorial === 'done' ? C.blockCount * s.size + C.boundaryHeadStart : null;
-    s.message = `Время босса ${failedWave} истекло. Ресурсы сохранены; повторный заход с квадрата ${restartBlock + 1}.`;
-  }
-
-  private completeRun(): void {
-    const s = this.state;
-    s.furthestBlock = Math.max(s.furthestBlock, C.blockCount);
-    s.breakthrough++;
-    s.completions++;
-    s.message = 'Граница 50-го квадрата проломлена. Получено очко прорывателя.';
-    this.resetOrdinaryResources();
-    if (s.cycleUpgrades.cycle7) s.alchemy.water = Math.min(alchemyCapacity(s.alchemy, 'water'), 100);
-    this.createMap();
-  }
-
-  private advanceChallengeRegeneration(dt: number): void {
-    const s = this.state;
-    if (!s.challengeArena || s.challengeWon || (s.challengeNumber !== 3 && s.challengeNumber !== 4)) return;
-    const rules = CHALLENGE_RULES[s.challengeNumber];
-    const remaining = s.stones.length / (s.size * s.size);
-    if (s.challengeNumber === 4 && remaining <= CHALLENGE_RULES[4].finishFraction) return;
-    if (s.challengeNumber === 4 && s.block >= C.blockCount - 1) return;
-    if (s.challengeNumber === 4) {
-      const repairPerSecond = C.needleBurnDamagePercentPerTick / C.needleBurnTickSeconds;
-      for (const stone of s.stones) stone.hp = Math.min(stone.maxHp, stone.hp + stone.maxHp * repairPerSecond * dt);
-    }
-    s.challengeRegenClock += dt;
-    while (s.challengeRegenClock >= 1) {
-      s.challengeRegenClock -= 1;
-      const missing: { x: number; y: number }[] = [];
-      const occupied = new Set(s.stones.map(stone => `${stone.x}:${stone.y}`));
-      for (let y = 0; y < s.size; y++) for (let x = 0; x < s.size; x++) if (!occupied.has(`${x}:${y}`)) missing.push({ x, y });
-      const count = Math.min(missing.length, Math.ceil(s.size * s.size * (rules.regenFraction ?? 0)));
-      for (let i = 0; i < count; i++) {
-        const pick = Math.floor(Math.random() * missing.length);
-        const [{ x, y }] = missing.splice(pick, 1);
-        const block = s.block;
-        const hp = (s.challengeNumber === 4 ? standardChallengeHp('stone', block) * s.challenge4StoneMultiplier : stoneMaxHp('stone', C.blockCount - 1)) * rules.stoneMultiplier;
-        s.stones.push({ block, x, y, hp, maxHp: hp, kind: 'stone', neighbors: 0 });
-      }
-      this.rebuildIndex();
-    }
-  }
-
-  private compressSpace(): void {
-    const s = this.state;
-    s.block++;
-    s.furthestBlock = Math.max(s.furthestBlock, s.block);
-    const milestone = s.block < C.blockCount && s.block % 5 === 0;
-    if (s.block < C.blockCount) {
-      s.y = s.size - 0.5;
-      s.target = null;
-      s.projectiles = [];
-      s.needleFollowUps = [];
-      s.attackClock = 0;
-      s.pickDash = false;
-      this.weapons.stopBeam();
-    }
-    s.bossRemaining = isBossBlock(s.block) ? C.bossTimerSeconds : 0;
-    s.y = s.size - 0.5;
-    s.target = null;
-    s.attackClock = 0;
-    s.pickDash = false;
-    this.weapons.stopBeam();
-    s.message = 'Пространственный сжиматель перенёс вас на следующий слой.';
-    if (milestone) { s.crystals++; s.message = 'Найден редкий кристалл.'; }
-    this.compressorEffect = { x: s.size / 2, y: s.size / 2, elapsed: 0 };
-  }
+  private compressSpace(): void { this.runLifecycle.compress(); }
 
   private step(dt: number): void {
     const s = this.state;
@@ -921,174 +673,30 @@ export class PreInfinityGame {
       return;
     }
     if (s.challengeArena && s.challengeWon) return;
-    if (s.challengeArena && s.challengeRemaining > 0) {
-      s.challengeRemaining = Math.max(0, s.challengeRemaining - dt);
-      if (s.challengeRemaining <= 0) {
-        s.challengeFailed = true;
-        s.challengeWon = true;
-        s.message = `Время Challenge ${s.challengeNumber} вышло.`;
-        this.challengeTransition = { type: 'result', number: s.challengeNumber, elapsed: 0, success: false };
-        return;
-      }
-    }
-    if (s.bossRemaining > 0) {
-      s.bossRemaining = Math.max(0, s.bossRemaining - dt);
-      if (s.bossRemaining <= 0) { this.failBoss(); return; }
-    }
-    if (s.spatialCompressorUnlocked && !s.challengeArena && !isBossBlock(s.block) && s.block < C.blockCount - 1 && this.currentStones().length / (s.size * s.size) <= 0.05) {
-      this.compressSpace();
-      return;
-    }
-    this.advanceAlchemy(dt);
-    if (s.autoCrystallizeEnabled && s.challenge3Completed) {
-      s.autoCrystallizeClock += dt;
-      while (s.autoCrystallizeClock >= 0.5) {
-        s.autoCrystallizeClock -= 0.5;
-        if (!this.crystallizeWater()) { s.autoCrystallizeClock = Math.min(s.autoCrystallizeClock, 0.5); break; }
-      }
-    } else s.autoCrystallizeClock = 0;
+    this.bus.invoke('challenges', { type: 'timer', payload: dt });
+    if (s.challengeArena && s.challengeWon) return;
+    if (this.progressionStep('boss', dt)) return;
+    if (this.progressionStep('compress', dt)) return;
+    this.bus.invoke('alchemy', { type: 'tick', payload: dt });
+    this.bus.invoke('alchemy', { type: 'auto-crystallize-tick', payload: dt });
     this.advanceChallengeRegeneration(dt);
     if (s.challengeWon) return;
-    if (s.alchemy.elementalizationEnabled && s.alchemy.air > 0) s.alchemy.air = Math.max(0, s.alchemy.air - dt);
-    this.advanceProjectiles(dt);
-    this.advanceBurning(dt);
+    this.bus.invoke('alchemy', { type: 'effects-tick', payload: dt });
+    this.bus.invoke('projectiles', { type: 'tick', payload: dt });
     for (const stone of s.stones) if ((stone.damageFlash ?? 0) > 0) stone.damageFlash = Math.max(0, (stone.damageFlash ?? 0) - dt * 4);
     this.weapons.advanceAnimation(dt);
-    s.clickBuffer = Math.max(0, s.clickBuffer - (C.clickBufferDrain + s.clickBuffer * C.clickBufferDecay) * dt);
-    s.clickWindowTime += dt;
-    while (s.clickWindowTime >= 1) {
-      if (s.clickWindowCount >= C.clickHeatClicksPerSecond) s.clickHeat = Math.min(C.clickHeatThreshold, s.clickHeat + 1);
-      else s.clickHeat = Math.max(0, s.clickHeat - C.clickHeatDecayPerSecond);
-      s.clickWindowCount = 0; s.clickWindowTime -= 1;
-    }
+    this.bus.invoke('input', { type: 'tick', payload: dt });
     if (s.buffRemaining > 0) s.buffRemaining = Math.max(0, s.buffRemaining - dt);
     if (s.earthOverloadRemaining > 0) s.earthOverloadRemaining = Math.max(0, s.earthOverloadRemaining - dt);
-    if (s.artifactUnlocked && !(s.challengeArena && s.challengeNumber === 2)) {
-      s.artifactClock += dt;
-      while (s.artifactClock >= C.artifactInterval) { s.artifactClock -= C.artifactInterval; this.artifactTick(); }
-    }
+    this.bus.invoke('artifact', { type: 'tick', payload: dt });
     const target = this.movement.target(s, this.currentStones());
     s.target = target ? { x: target.x, y: target.y } : null;
-    const comboEnabled = ((s.weapon === 'pick' && s.combos.pick) || (s.weapon === 'spear' && s.combos.spear)) && s.challenge2Completed;
-    const mining = !!target && Math.hypot(target.x - s.x, target.y - s.y) <= this.weapons.interactionRange(s);
-    if (comboEnabled && !mining) {
-      const chargeSpeed = this.weapons.speedMultiplier(s, s.weapon);
-      if (s.weapon === 'pick') s.pickDashCharge = Math.min(1, s.pickDashCharge + dt * chargeSpeed / C.pickDashChargeSeconds);
-      else s.spearDashCharge = Math.min(1, s.spearDashCharge + dt * chargeSpeed / C.spearDashChargeSeconds);
-    }
+    this.bus.invoke('controlled-weapon', { type: 'tick', payload: { seconds: dt, target } });
     if (target) {
-      if (s.tutorial === 'second' && s.block === 2 && target.kind === 'hard') s.tutorial = 'penetration';
-      const distance = Math.hypot(target.x - s.x, target.y - s.y);
-      const interactionRange = this.weapons.interactionRange(s);
-      if (distance > interactionRange) this.movement.move(s, target.x, target.y, dt);
-      const canAttack = s.auto || s.tutorial === 'click';
-      if (canAttack && s.tutorial !== 'auto' && Math.hypot(target.x - s.x, target.y - s.y) <= interactionRange) {
-        const attacks = this.weapons.tick(s, dt, this.weapons.speedMultiplier(s, s.weapon));
-        for (let i = 0; i < attacks; i++) {
-          const next = this.movement.target(s, this.currentStones());
-          if (!next || Math.hypot(next.x - s.x, next.y - s.y) > interactionRange) break;
-          const comboCadence = C.comboAttackCount - (s.cycleUpgrades.cycle6 ? 2 : 0);
-          const pickCombo = s.weapon === 'pick' && s.challenge2Completed && s.combos.pick && (s.comboCounts.pick % comboCadence === comboCadence - 1 || s.pickDashCharge >= 1);
-          const spearCombo = s.weapon === 'spear' && s.challenge2Completed && s.combos.spear && (s.comboCounts.spear % comboCadence === comboCadence - 1 || s.spearDashCharge >= 1);
-          const pickDashPath = pickCombo ? this.pickDash(next) : null;
-          if (spearCombo) this.spearWindup();
-          const spearDashPath = spearCombo ? this.spearDash() : null;
-          const impact = spearCombo ? this.movement.target(s, this.currentStones()) : next;
-          if (!impact) continue;
-          this.strike(impact, spearDashPath, pickDashPath);
-          if (spearCombo) { s.attackClock = 0; break; }
-          if (s.challengeArena && s.challengeWon) break;
-        }
-      }
-      if (s.rangedUnlocked || s.needleUnlocked) {
-        const speed = this.weapons.speedMultiplier(s, 'ranged');
-        if (s.rangedWeapon === 'emitter') {
-          s.needleRecheckClock = 0;
-          const emitterAttacks = this.weapons.tick(s, dt, speed, 'ranged');
-          s.rangedBurstCharge = Math.min(C.rangedBurstMax, s.rangedBurstCharge + emitterAttacks);
-          this.weapons.laser(s, this.currentStones(), dt, speed, (stone, damage) => this.hit(stone, damage, true, false, false, true, s.emitterPierceUpgrade, true, 0x51dce0));
-        } else {
-          this.weapons.stopBeam();
-          const attacks = this.weapons.tick(s, dt, speed, 'ranged');
-          for (let i = 0; i < attacks; i++) {
-            if (!this.launchNeedle()) break;
-            if (s.challenge2Completed) s.rangedBurstCharge = Math.min(C.rangedBurstMax, s.rangedBurstCharge + 1);
-          }
-          s.needleRecheckClock += dt;
-          if (s.needleRecheckClock >= C.needleRecheckInterval) {
-            s.needleRecheckClock -= C.needleRecheckInterval;
-            if (this.launchNeedle() && s.challenge2Completed) s.rangedBurstCharge = Math.min(C.rangedBurstMax, s.rangedBurstCharge + 1);
-          }
-        }
-      }
+      this.bus.invoke('autonomous-weapon', { type: 'tick', payload: { seconds: dt, target } });
       s.pickDash = false;
-      if (s.needleAltUnlocked && s.needleUnlocked && s.rangedWeapon !== 'needle') {
-      s.needleAltClock += dt * this.weapons.needleSpeedMultiplier(s) / (C.needleInterval * (s.cycleUpgrades.cycle2 ? 1 : C.needleAltIntervalMultiplier));
-        while (s.needleAltClock >= 1 - 1e-9) { s.needleAltClock = Math.max(0, s.needleAltClock - 1); if (!this.launchNeedle()) break; }
-      }
-    } else {
-      if (s.challengeArena && s.challengeNumber === 4) {
-        this.weapons.stopBeam();
-        this.movement.move(s, s.x, -0.5, dt);
-        if (s.y <= -0.5) {
-          if (s.block >= C.blockCount - 1) {
-            this.completeChallenge(4);
-            return;
-          }
-          s.block++;
-          s.stones = [];
-          for (let y = 0; y < s.size; y++) for (let x = 0; x < s.size; x++) {
-            const kind = standardChallengeKind(s.block, x, y, s.size);
-            const hp = standardChallengeHp(kind, s.block) * s.challenge4StoneMultiplier;
-            s.stones.push({ block: s.block, x, y, hp, maxHp: hp, kind, neighbors: 0 });
-          }
-          this.rebuildIndex();
-          s.x = Math.floor(s.size / 2);
-          s.y = s.size - 0.5;
-          s.target = null;
-          s.projectiles = [];
-          s.needleFollowUps = [];
-        }
-        return;
-      }
-      if (s.block === C.blockCount - 1 && this.currentStones().length === 0) {
-        this.weapons.stopBeam();
-        this.movement.move(s, s.x, -0.5, dt);
-        if (s.y <= -0.5 && s.endChargeRemaining <= 0) {
-          s.endChargeRemaining = C.finalChargeSeconds;
-          s.message = 'Финальная граница. Зарядите пробивной удар.';
-        }
-        return;
-      }
-      this.weapons.stopBeam();
-      this.movement.move(s, s.x, -0.5, dt);
-      if (s.y <= -0.5) {
-        const clearedBlock = s.block;
-        s.block++;
-        if (s.spectraUpgrades.skipLayers && isBossBlock(clearedBlock)) s.block = Math.min(C.blockCount - 1, s.block + 2);
-        if (s.tutorial === 'third' && s.block >= 3) {
-          s.tutorial = 'done';
-          s.boundary = C.blockCount * s.size + C.boundaryHeadStart;
-          s.message = 'Граница приближается. Продолжайте прорыв.';
-        }
-        s.furthestBlock = Math.max(s.furthestBlock, s.block);
-        if (s.block % 5 === 0) { s.crystals++; s.message = 'Найден редкий кристалл.'; }
-        if (s.block >= C.blockCount) {
-          this.completeRun();
-        } else {
-          s.bossRemaining = isBossBlock(s.block) ? C.bossTimerSeconds : 0;
-          s.y = s.size - 0.5;
-          s.target = null;
-          s.projectiles = [];
-          s.needleFollowUps = [];
-        }
-      }
-    }
-    if (s.boundary !== null && !s.challengeArena && s.bossRemaining <= 0 && s.block < C.blockCount - 1) {
-      s.boundary -= C.boundarySpeed * dt;
-      const position = s.block * s.size + s.size - s.y;
-      if (s.boundary <= position) this.fail();
-    }
+    } else if (this.progressionStep('cleared', dt)) return;
+    this.bus.invoke('progression', { type: 'boundary', payload: dt });
   }
 
   advance(seconds: number): void {
@@ -1096,7 +704,7 @@ export class PreInfinityGame {
     let remaining = Math.min(seconds, C.offlineLimitSeconds);
     while (remaining > 0) {
       const dt = Math.min(remaining, C.simulationStep);
-      this.step(dt);
+      this.bus.tick(dt);
       remaining -= dt;
     }
   }
@@ -1126,9 +734,7 @@ export class PreInfinityGame {
       s.ore -= C.spatialCompressorCost;
       s.spatialCompressorUnlocked = true;
       s.message = 'Сжиматель открыт навсегда и сработает при остатке породы ≤5%.';
-      if (!s.challengeArena && !isBossBlock(s.block) && s.block < C.blockCount - 1 && this.currentStones().length / (s.size * s.size) <= 0.05) {
-        this.compressSpace();
-      }
+      this.progressionStep('compress', 0);
       return true;
     }
     if (upgrade === 'auto') {
@@ -1201,51 +807,7 @@ export class PreInfinityGame {
       s.weaponMasteries[masteryWeapon] = true;
       return true;
     }
-    const level = upgrade === 'fistComboRadius' ? s.fistComboRadiusLevel : upgrade === 'spearDamage' ? s.spearLevel : upgrade === 'spearReach' ? s.spearReachLevel : upgrade === 'spearSpeed' ? s.spearSpeedLevel : upgrade === 'melee' ? s.fistLevel : upgrade === 'fistSpeed' ? s.fistSpeedLevel : upgrade === 'pickDamage' ? s.pickLevel : upgrade === 'pickSpeed' ? s.pickSpeedLevel : upgrade === 'rangedDamage' ? s.rangedLevel : upgrade === 'needleDamage' ? s.needleLevel : upgrade === 'needleSpeed' ? s.needleSpeedLevel : upgrade === 'emitterSpeed' ? s.emitterSpeedLevel : upgrade === 'fistFinisher' ? s.fistFinisherLevel : upgrade === 'pickReach' ? s.pickReachLevel : upgrade === 'needlePierce' ? s.needlePierceLevel : upgrade === 'emitterSpread' ? s.emitterSpreadLevel : upgrade === 'emitterArea' ? s.emitterAreaLevel : upgrade === 'beamSpeed' ? s.beamSpeedLevel : upgrade === 'movement' ? s.movementLevel : s.movementLevel;
-    const meleeRadiusLevels = s.cycleUpgrades.cycle3 ? 2 : 0;
-    if (upgrade === 'fistComboRadius' && (!s.fistComboUnlocked || level >= C.comboFistRadiusMaxLevel + meleeRadiusLevels || (level >= 3 && s.furthestBlock <= C.comboFistRadiusLevel4UnlockBlock))) return false;
-    if ((upgrade === 'spearDamage' || upgrade === 'spearReach' || upgrade === 'spearSpeed') && (!s.spearUnlocked || (upgrade === 'spearReach' && level >= C.spearReachMaxLevel + meleeRadiusLevels))) return false;
-    if (upgrade === 'pickDamage' && !s.pickUnlocked) return false;
-    if (upgrade === 'pickSpeed' && !s.pickUnlocked) return false;
-    if (upgrade === 'pickReach' && (!s.pickUnlocked || level >= C.pickReachMaxLevel + meleeRadiusLevels)) return false;
-    if (upgrade === 'rangedDamage' && !s.rangedUnlocked) return false;
-    if (upgrade === 'needleDamage' && !s.needleUnlocked) return false;
-    if (upgrade === 'needleSpeed' && !s.needleUnlocked) return false;
-    if (upgrade === 'emitterSpeed' && !s.rangedUnlocked) return false;
-    if (upgrade === 'needlePierce' && (!s.needleUnlocked || level >= C.needlePierceMaxLevel)) return false;
-    if (upgrade === 'emitterSpread' && (!s.rangedUnlocked || level >= C.emitterSpreadMaxLevel)) return false;
-    if (upgrade === 'emitterArea' && (!s.rangedUnlocked || level >= C.emitterAreaMaxLevel)) return false;
-    if (upgrade === 'beamSpeed' && !s.rangedUnlocked) return false;
-    const cost = Math.ceil(upgradeOreCost(upgrade, level) * (s.cycleUpgrades.cycle16 ? 0.97 : 1));
-    const crystals = specialCrystalCost(upgrade, level);
-    if (s.ore < cost || s.crystals < crystals) return false;
-    s.ore -= cost; s.crystals -= crystals;
-    if (upgrade === 'fistComboRadius') {
-      s.fistComboRadiusLevel++;
-      if (s.fistComboRadiusLevel <= 3 && s.fistComboRadiusRewardedLevels < s.fistComboRadiusLevel) {
-        s.crystals += s.fistComboRadiusLevel - s.fistComboRadiusRewardedLevels;
-        s.fistComboRadiusRewardedLevels = s.fistComboRadiusLevel;
-      }
-    }
-    else if (upgrade === 'spearDamage') s.spearLevel++;
-    else if (upgrade === 'spearReach') s.spearReachLevel++;
-    else if (upgrade === 'spearSpeed') s.spearSpeedLevel++;
-    else if (upgrade === 'melee') s.fistLevel++;
-    else if (upgrade === 'fistSpeed') s.fistSpeedLevel++;
-    else if (upgrade === 'pickDamage') s.pickLevel++;
-    else if (upgrade === 'pickSpeed') s.pickSpeedLevel++;
-    else if (upgrade === 'rangedDamage') s.rangedLevel++;
-    else if (upgrade === 'needleDamage') s.needleLevel++;
-    else if (upgrade === 'needleSpeed') s.needleSpeedLevel++;
-    else if (upgrade === 'emitterSpeed') s.emitterSpeedLevel++;
-    else if (upgrade === 'fistFinisher') s.fistFinisherLevel++;
-    else if (upgrade === 'pickReach') s.pickReachLevel++;
-    else if (upgrade === 'needlePierce') s.needlePierceLevel++;
-    else if (upgrade === 'emitterSpread') s.emitterSpreadLevel++;
-    else if (upgrade === 'emitterArea') s.emitterAreaLevel++;
-    else if (upgrade === 'beamSpeed') s.beamSpeedLevel++;
-    else if (upgrade === 'movement') s.movementLevel++;
-    return true;
+    return this.repeatableShop.buy(s, upgrade);
   }
 
   equip(weapon: WeaponId): void {
@@ -1275,89 +837,8 @@ export class PreInfinityGame {
   enterChallenge3(): boolean { return this.enterChallenge(3); }
   enterChallenge4(): boolean { return this.enterChallenge(4); }
 
-  private enterChallenge(number: 1 | 2 | 3 | 4): boolean {
-    const s = this.state;
-    const unlocked = number === 1 ? this.challenge1Unlocked : number === 2 ? this.challenge2Unlocked : number === 3 ? this.challenge3Unlocked : this.challenge4Unlocked;
-    if (s.paused || s.challengeArena || !unlocked || (number === 3 && s.alchemy.air < 1) || s.endChargeRemaining > 0 || this.finalWallEffect) return false;
-    s.challengeReturnStones = s.stones;
-    s.challengeReturnSize = s.size;
-    s.challengeReturnBlock = s.block;
-    s.challengeReturnX = s.x;
-    s.challengeReturnY = s.y;
-    s.challengeReturnBossRemaining = s.bossRemaining;
-    s.challengeReturnEndChargeRemaining = s.endChargeRemaining;
-    s.bossRemaining = 0;
-    s.endChargeRemaining = 0;
-    if (number === 3) {
-      const seed = CHALLENGE_RULES[3].alchemySeed;
-      s.alchemy.stone += seed.stone ?? 0;
-      s.alchemy.earth += seed.earth ?? 0;
-      s.alchemy.elementalStone += seed.elementalStone ?? 0;
-      s.alchemy.water += seed.water ?? 0;
-      s.challenge3Transmuted = 0;
-      s.challenge3WaterProduced = false;
-      s.challenge3AirProduced = false;
-      s.alchemy.earthEnabled = true;
-      s.alchemy.waterEnabled = true;
-      s.alchemy.airProductionEnabled = true;
-    }
-    s.challengeRegenClock = 0;
-    s.stones = [];
-    const rules = CHALLENGE_RULES[number];
-    s.size = rules.size;
-    s.block = 0;
-    s.challengeArena = true;
-    s.challengeNumber = number;
-    s.challengeWon = false;
-    s.challengeFailed = false;
-    s.challengeRemaining = rules.durationSeconds;
-    // Fists get their special area strike in Challenge 2 even though regular weapon splash is off.
-    if (number === 2) s.combos.fists = true;
-    for (let y = 0; y < s.size; y++) for (let x = 0; x < s.size; x++) {
-      const kind: StoneKind = number === 4 ? standardChallengeKind(s.block, x, y, s.size) : 'stone';
-      const hp = (number === 4 ? standardChallengeHp(kind, s.block) : stoneMaxHp(kind, C.blockCount - 1)) * rules.stoneMultiplier * (number === 4 ? s.challenge4StoneMultiplier : 1);
-      s.stones.push({ block: s.block, x, y, hp, maxHp: hp, kind, neighbors: 0 });
-    }
-    this.rebuildIndex();
-    s.x = Math.floor(s.size / 2); s.y = s.size; s.target = null; s.attackClock = 0;
-    s.comboCounts = { fists: 0, pick: 0, spear: 0 };
-    this.challengeTransition = { type: 'enter', number, elapsed: 0 };
-    return true;
-  }
-
-  leaveChallenge1(): boolean {
-    const s = this.state;
-    if (!s.challengeArena) return false;
-    const number = s.challengeNumber;
-    this.challengeTransition = { type: 'exit', number, elapsed: 0, success: s.challengeWon && !s.challengeFailed };
-    s.stones = s.challengeReturnStones ?? [];
-    s.challengeReturnStones = null;
-    s.size = s.challengeReturnSize ?? C.blockSize + s.expansion;
-    s.block = s.challengeReturnBlock ?? s.block;
-    s.x = s.challengeReturnX ?? Math.floor(s.size / 2);
-    s.y = s.challengeReturnY ?? s.size - 0.5;
-    if (s.challengeReturnAlchemy) {
-      s.alchemy = s.challengeReturnAlchemy;
-      s.challengeReturnAlchemy = null;
-    }
-    if (number === 3 && s.challenge3Completed) {
-      s.alchemy.earthEnabled = true;
-      s.alchemy.waterEnabled = true;
-      s.alchemy.airProductionEnabled = true;
-      s.alchemy.elementalizationEnabled = true;
-    }
-    s.bossRemaining = s.challengeReturnBossRemaining ?? 0;
-    s.endChargeRemaining = s.challengeReturnEndChargeRemaining ?? 0;
-    s.challengeReturnBossRemaining = null;
-    s.challengeReturnEndChargeRemaining = null;
-    if (number === 2 && !s.fistComboUnlocked) s.combos.fists = false;
-    if (number === 4) { s.challenge4StoneMultiplier = 1; s.challenge4DamageMultiplier = 1; s.challenge4RangeBonus = 0; }
-    s.challengeReturnSize = s.challengeReturnBlock = s.challengeReturnX = s.challengeReturnY = null;
-    s.challengeArena = false; s.challengeWon = false; s.challengeFailed = false; s.challengeRemaining = 0; s.challengeNumber = 1; s.target = null;
-    s.challenge3Transmuted = 0; s.challenge3WaterProduced = false; s.challenge3AirProduced = false;
-    this.rebuildIndex();
-    return true;
-  }
+  private enterChallenge(number: 1 | 2 | 3 | 4): boolean { return this.challenges.enter(number); }
+  leaveChallenge1(): boolean { return this.challenges.leave(); }
 
   equipRanged(weapon: RangedWeaponId): void {
     if (!this.state.paused && ((weapon === 'emitter' && this.state.rangedUnlocked) || (weapon === 'needle' && this.state.needleUnlocked))) {
@@ -1369,7 +850,7 @@ export class PreInfinityGame {
 
   fireRangedBurst(): boolean {
     const s = this.state;
-    if (s.paused || !s.challenge2Completed || s.rangedBurstCharge < 1) return false;
+    if (s.paused || !this.bus.isEnabled('autonomous-weapon') || !s.challenge2Completed || s.rangedBurstCharge < 1) return false;
     const shots = Math.min(C.rangedBurstMax, Math.floor(s.rangedBurstCharge));
     if (s.rangedWeapon === 'needle') {
       let fired = 0;
@@ -1380,15 +861,13 @@ export class PreInfinityGame {
     }
     const target = this.weapons.rangedTarget(s, this.currentStones());
     if (!target) return false;
-    const radius = s.challengeArena && !CHALLENGE_RULES[s.challengeNumber].weaponSplash ? 0 : C.rangedBlastRadius + s.emitterAreaLevel;
-    const baseDamage = (C.rangedDamage + s.rangedLevel * C.rangedDamagePerLevel) * shots * (s.cycleUpgrades.cycle5 ? 1.5 : 1);
-    for (const stone of [...this.currentStones()]) {
-      const distance = Math.hypot(stone.x - target.x, stone.y - target.y);
-      if (distance > radius) continue;
+    const radius = s.challengeArena && !CHALLENGE_RULES[s.challengeNumber].weaponSplash ? 0 : this.weapons.radius(s, 'emitter');
+    const baseDamage = this.weapons.baseDamage(s, 'emitter') * shots * this.weapons.damageMultiplier(s, 'ranged');
+    this.world.damageArea(s.block, { shape: 'circle', center: target, radius }, (_stone, distance) => {
       const t = distance / (radius + 1);
       const falloff = distance === 0 ? 1 : Math.max(0, 1 - t * t * (3 - 2 * t));
-      this.hit(stone, baseDamage * falloff, true, false, false, true, s.emitterPierceUpgrade, true);
-    }
+      return distance > radius ? 0 : baseDamage * falloff;
+    }, (stone, damage) => this.hit(stone, damage, true, false, false, true, isSpecialUpgradeActive(s, 'emitterPierce'), true));
     s.rangedBurstCharge -= shots;
     return true;
   }

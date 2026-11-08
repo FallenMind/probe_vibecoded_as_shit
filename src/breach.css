@@ -70,6 +70,10 @@ h1 { margin-top: 8px; color: #f4f2e9; font-size: clamp(23px, 2.3vw, 34px); lette
 .upgrade:not(:disabled) .upgrade-icon { background: #cdbb98; color: #243b35; }
 .upgrade:not(:disabled) .price { color: #493b22; }
 .upgrade:hover:not(:disabled), .upgrade:focus-visible:not(:disabled) { border-color: #fff0c9; background: #fff1d2; }
+.upgrade.challenge-reward { border-color: #557d59; background: #213c2b; color: #dcebd8; }
+.upgrade.challenge-reward .upgrade-icon { background: #315a3a; color: #bce5ad; }
+.upgrade.challenge-reward .price { color: #c0e4b3; }
+.upgrade.challenge-reward:not(:disabled):hover, .upgrade.challenge-reward:not(:disabled):focus-visible { border-color: #a4d790; background: #31583a; }
 .upgrade:disabled { opacity: .55; }.upgrade.attention { opacity: 1; border-color: #eec884; box-shadow: 0 0 0 2px #eec88433; animation: attention 1s infinite alternate; }
 @keyframes attention { to { box-shadow: 0 0 0 5px #eec88433; } }
 .upgrade-icon { width: 28px; height: 28px; font-size: 16px; }.upgrade-icon.artifact { color: #b9b7ee; background: #34374a; }

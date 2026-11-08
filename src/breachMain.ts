@@ -1,9 +1,11 @@
+import { isCycleUpgradeActive } from './framework/adapters/breachCycleEffects';
+import { isAlchemyUpgradeActive } from './framework/adapters/breachAlchemyUpgrades';
 import './breach.css';
 import { createGame } from './game/config';
 import { breachGame, clearBreachSave, specialCrystalCost, upgradeOreCost, CYCLE_UPGRADE_DEFS, SPECTRA_UPGRADE_DEFS } from './game/breach';
 import { BREACH_CONFIG as C } from './game/breachConfig';
 import { BreachScene } from './game/BreachScene';
-import { ALCHEMY_CONFIG as A, ALCHEMY_UPGRADES, alchemyCapacity, alchemyTickSeconds } from './game/alchemy';
+import { ALCHEMY_CONFIG as A, ALCHEMY_UPGRADES, alchemyTickSeconds } from './game/alchemy';
 import type { AlchemyNode, AlchemyResource, AlchemySwitch } from './game/alchemy';
 import { CHALLENGE_RULES, type ChallengeId } from './game/challengeConfig';
 
@@ -209,21 +211,21 @@ for (const definition of ALCHEMY_UPGRADES) {
   const button = document.createElement('button');
   button.className = 'alchemy-upgrade';
   button.dataset.alchemyUpgrade = definition.id;
-  button.addEventListener('click', () => { if (breachGame.buyAlchemyUpgrade(definition.id)) breachGame.save(); render(); });
+  button.addEventListener('click', () => { if (breachGame.bus.invoke('alchemy', { type: 'buy', payload: definition.id })) breachGame.save(); render(); });
   $(`[data-alchemy-upgrades="${definition.node}"]`).appendChild(button);
 }
 
 document.querySelectorAll<HTMLButtonElement>('[data-alchemy-switch]').forEach(button => button.addEventListener('click', () => {
-  if (breachGame.toggleAlchemy(button.dataset.alchemySwitch as AlchemySwitch)) breachGame.save();
+  if (breachGame.bus.invoke('alchemy', { type: 'toggle', payload: button.dataset.alchemySwitch as AlchemySwitch })) breachGame.save();
   render();
 }));
-$('#crystallize-water').addEventListener('click', () => { if (breachGame.crystallizeWater()) breachGame.save(); render(); });
-$('#craft-water').addEventListener('click', () => { if (breachGame.craftWater()) breachGame.save(); render(); });
-$('#earth-overload').addEventListener('click', () => { if (breachGame.startEarthOverload()) breachGame.save(); render(); });
-$('#auto-crystallize').addEventListener('click', () => { if (breachGame.toggleAutoCrystallize()) breachGame.save(); render(); });
-$('#spectra-unlock').addEventListener('click', () => { if (breachGame.buySpectraUnlock()) breachGame.save(); render(); });
-$('#spectra-upgrades').addEventListener('click', (event) => { const target = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-spectra-upgrade]'); if (target && breachGame.buySpectraUpgrade(target.dataset.spectraUpgrade!)) breachGame.save(); render(); });
-$('#cycle-upgrades').addEventListener('click', (event) => { const target = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-cycle-upgrade]'); if (target && breachGame.buyCycleUpgrade(target.dataset.cycleUpgrade!)) breachGame.save(); render(); });
+$('#crystallize-water').addEventListener('click', () => { if (breachGame.bus.invoke('alchemy', { type: 'crystallize', payload: null })) breachGame.save(); render(); });
+$('#craft-water').addEventListener('click', () => { if (breachGame.bus.invoke('alchemy', { type: 'craft-water', payload: null })) breachGame.save(); render(); });
+$('#earth-overload').addEventListener('click', () => { if (breachGame.bus.invoke('alchemy', { type: 'overload', payload: null })) breachGame.save(); render(); });
+$('#auto-crystallize').addEventListener('click', () => { if (breachGame.bus.invoke('alchemy', { type: 'auto-crystallize', payload: null })) breachGame.save(); render(); });
+$('#spectra-unlock').addEventListener('click', () => { if (breachGame.bus.invoke('spectra', { type: 'unlock', payload: null })) breachGame.save(); render(); });
+$('#spectra-upgrades').addEventListener('click', (event) => { const target = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-spectra-upgrade]'); if (target && breachGame.bus.invoke('upgrades', { type: 'buy-spectra', payload: target.dataset.spectraUpgrade! })) breachGame.save(); render(); });
+$('#cycle-upgrades').addEventListener('click', (event) => { const target = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-cycle-upgrade]'); if (target && breachGame.bus.invoke('upgrades', { type: 'buy-cycle', payload: target.dataset.cycleUpgrade! })) breachGame.save(); render(); });
 
 function setUpgrade(name: string, price: string, disabled: boolean, level?: number): void {
   const button = upgrade(name);
@@ -241,8 +243,8 @@ function renderAlchemy(): void {
   const waterOpen = breachGame.alchemyNodeUnlocked('water');
   const airOpen = breachGame.alchemyNodeUnlocked('air');
   const fireOpen = breachGame.alchemyNodeUnlocked('fire');
-  const earthCapacity = alchemyCapacity(a, 'earth');
-  const waterCapacity = alchemyCapacity(a, 'water');
+  const earthCapacity = breachGame.alchemyLimit('earth');
+  const waterCapacity = breachGame.alchemyLimit('water');
   $('#tab-alchemy').classList.toggle('unlocked', earthOpen);
   $('#tab-alchemy').classList.toggle('new-feature', earthOpen && !s.alchemyHelpSeen && $('#alchemy-view').classList.contains('hidden'));
   $('.alchemy-help summary').classList.toggle('new-feature', earthOpen && !s.alchemyHelpSeen);
@@ -255,12 +257,12 @@ function renderAlchemy(): void {
   document.querySelectorAll<HTMLElement>('[data-alchemy-panel]').forEach(panel => panel.classList.toggle('hidden', panel.dataset.alchemyPanel !== selectedAlchemyNode));
   $('#earth-node-status').textContent = earthOpen ? `${a.earth} / ${earthCapacity}` : `Квадрат ${A.earthUnlockBlock + 1}`;
   $('#water-node-status').textContent = waterOpen ? `${a.water} / ${waterCapacity}` : `Квадрат ${A.waterUnlockBlock + 1}`;
-  $('#fire-node-status').textContent = fireOpen ? `${a.fire} / ${alchemyCapacity(a, 'fire')}` : 'Challenge 3';
+  $('#fire-node-status').textContent = fireOpen ? `${a.fire} / ${breachGame.alchemyLimit('fire')}` : 'Challenge 3';
   $('#earth-description').textContent = earthOpen
-    ? `Каждые ${alchemyTickSeconds(a, 'earth')} с: ${A.earthRecipe.fraction * 100}% запаса камня → Земля 1:1. Улучшения покупаются за Воду, Т2 — за Воздух.`
+    ? `Каждые ${alchemyTickSeconds(a, 'earth', id => isAlchemyUpgradeActive(s, id))} с: ${A.earthRecipe.fraction * 100}% запаса камня → Земля 1:1. Улучшения покупаются за Воду, Т2 — за Воздух.`
     : `Пройдите квадрат ${A.earthUnlockBlock + 1}, чтобы открыть Землю и Воду.`;
   $('#water-description').textContent = waterOpen
-    ? `Каждые ${alchemyTickSeconds(a, 'water')} с: до ${A.waterRecipe.fraction * 100}% запаса Земли; на 1 Воду нужны 1 Земля и ${A.waterRecipe.elementalPerWater} элементальных камня (минимум 1 Вода).`
+    ? `Каждые ${alchemyTickSeconds(a, 'water', id => isAlchemyUpgradeActive(s, id))} с: до ${A.waterRecipe.fraction * 100}% запаса Земли; на 1 Воду нужны 1 Земля и ${A.waterRecipe.elementalPerWater} элементальных камня (минимум 1 Вода).`
     : `Пройдите квадрат ${A.waterUnlockBlock + 1}, чтобы открыть Воду.`;
   $('#air-description').textContent = airOpen
     ? `Производство тратит ${A.airRecipe.waterPerAir} Воды на 1 Воздух каждые ${A.airRecipe.seconds} с. Элементализация расходует 1 Воздух в секунду и с шансом 50% превращает добытый камень в элементальный.`
@@ -275,8 +277,8 @@ function renderAlchemy(): void {
   $('#alchemy-elemental').textContent = String(a.elementalStone);
   $('#alchemy-water').textContent = `${a.water} / ${waterCapacity}`;
   $('#alchemy-water-for-air').textContent = String(a.water);
-  $('#alchemy-air').textContent = `${a.air} / ${alchemyCapacity(a, 'air')}`;
-  $('#alchemy-fire').textContent = `${a.fire} / ${alchemyCapacity(a, 'fire')}`;
+  $('#alchemy-air').textContent = `${a.air} / ${breachGame.alchemyLimit('air')}`;
+  $('#alchemy-fire').textContent = `${a.fire} / ${breachGame.alchemyLimit('fire')}`;
   $('#alchemy-water-crystals').textContent = String(s.crystals);
   const labels: Record<AlchemySwitch, string> = {
     earthEnabled: 'Производство Земли', waterEnabled: 'Производство Воды',
@@ -367,7 +369,7 @@ function render(): void {
   $<HTMLButtonElement>('#mine').disabled = s.paused;
   document.querySelectorAll('.advanced').forEach((el) => el.classList.toggle('hidden', !s.auto));
   $('#resource-loop').classList.toggle('hidden', !breachGame.alchemyNodeUnlocked('earth'));
-  $('#alchemy-quick-resources').textContent = `Камень ${s.alchemy.stone} · Земля ${s.alchemy.earth}/${alchemyCapacity(s.alchemy, 'earth')}${breachGame.alchemyNodeUnlocked('water') ? ` · Элементальный камень ${s.alchemy.elementalStone} · Вода ${s.alchemy.water}/${alchemyCapacity(s.alchemy, 'water')}` : ''}${breachGame.alchemyNodeUnlocked('air') ? ` · Воздух ${s.alchemy.air}/${alchemyCapacity(s.alchemy, 'air')}` : ''}${breachGame.alchemyNodeUnlocked('fire') ? ` · Огонь ${s.alchemy.fire}/${alchemyCapacity(s.alchemy, 'fire')}` : ''}`;
+  $('#alchemy-quick-resources').textContent = `Камень ${s.alchemy.stone} · Земля ${s.alchemy.earth}/${breachGame.alchemyLimit('earth')}${breachGame.alchemyNodeUnlocked('water') ? ` · Элементальный камень ${s.alchemy.elementalStone} · Вода ${s.alchemy.water}/${breachGame.alchemyLimit('water')}` : ''}${breachGame.alchemyNodeUnlocked('air') ? ` · Воздух ${s.alchemy.air}/${breachGame.alchemyLimit('air')}` : ''}${breachGame.alchemyNodeUnlocked('fire') ? ` · Огонь ${s.alchemy.fire}/${breachGame.alchemyLimit('fire')}` : ''}`;
   $('#resource-loop [data-alchemy-switch="waterEnabled"]').classList.toggle('hidden', !breachGame.alchemyNodeUnlocked('water'));
   $('#resource-loop [data-alchemy-switch="elementalizationEnabled"]').classList.toggle('hidden', !breachGame.alchemyNodeUnlocked('air'));
   const overload = $<HTMLButtonElement>('#earth-overload');
@@ -403,7 +405,7 @@ function render(): void {
   for (const [name, level] of [['fistComboRadius', s.fistComboRadiusLevel], ['spearDamage', s.spearLevel], ['spearReach', s.spearReachLevel], ['spearSpeed', s.spearSpeedLevel], ['melee', s.fistLevel], ['fistSpeed', s.fistSpeedLevel], ['pickDamage', s.pickLevel], ['pickSpeed', s.pickSpeedLevel], ['movement', s.movementLevel], ['rangedDamage', s.rangedLevel], ['needleDamage', s.needleLevel], ['needleSpeed', s.needleSpeedLevel], ['emitterSpeed', s.emitterSpeedLevel], ['fistFinisher', s.fistFinisherLevel], ['pickReach', s.pickReachLevel], ['needlePierce', s.needlePierceLevel], ['emitterSpread', s.emitterSpreadLevel], ['emitterArea', s.emitterAreaLevel], ['beamSpeed', s.beamSpeedLevel]] as const) {
     const cost = upgradeOreCost(name, level);
     const crystals = specialCrystalCost(name, level);
-    const extraRadiusLevels = s.cycleUpgrades.cycle3 ? 2 : 0;
+    const extraRadiusLevels = isCycleUpgradeActive(s, 'cycle3') ? 2 : 0;
     const fistRadiusLocked = name === 'fistComboRadius' && level >= 3 && s.furthestBlock <= C.comboFistRadiusLevel4UnlockBlock;
     const costLabel = `${cost} ◆${crystals ? ` + ${crystals} ✦` : ''}${fistRadiusLocked ? ' · КВ. 25' : ''}`;
     setUpgrade(name, costLabel, !s.repeatablesUnlocked || s.ore < cost || s.crystals < crystals || fistRadiusLocked || (name === 'fistComboRadius' && (!s.fistComboUnlocked || level >= C.comboFistRadiusMaxLevel + extraRadiusLevels)) || (name === 'pickReach' && level >= C.pickReachMaxLevel + extraRadiusLevels) || ((name === 'pickDamage' || name === 'pickReach' || name === 'pickSpeed') && !s.pickUnlocked) || ((name === 'spearDamage' || name === 'spearReach' || name === 'spearSpeed') && !s.spearUnlocked) || (name === 'spearReach' && level >= C.spearReachMaxLevel + extraRadiusLevels) || ((name === 'rangedDamage' || name === 'emitterSpread' || name === 'emitterArea' || name === 'beamSpeed' || name === 'emitterSpeed') && !s.rangedUnlocked) || ((name === 'needleDamage' || name === 'needlePierce' || name === 'needleSpeed') && !s.needleUnlocked) || (name === 'needlePierce' && level >= C.needlePierceMaxLevel) || (name === 'emitterSpread' && level >= C.emitterSpreadMaxLevel) || (name === 'emitterArea' && level >= C.emitterAreaMaxLevel), level);
@@ -445,7 +447,7 @@ function render(): void {
     const selected = weapon === s.weapon || (weapon === s.rangedWeapon && (s.rangedUnlocked || s.needleUnlocked));
     const mastery = button.dataset.upgrade?.replace('Mastery', '').toLowerCase() as keyof typeof s.weaponMasteries | undefined;
     const masteryOwned = !!mastery && s.weaponMasteries[mastery];
-    const maxed = masteryOwned || (button.dataset.upgrade === 'fistComboRadius' && s.fistComboRadiusLevel >= C.comboFistRadiusMaxLevel + (s.cycleUpgrades.cycle3 ? 2 : 0)) || (button.dataset.upgrade === 'needlePierce' && s.needlePierceLevel >= C.needlePierceMaxLevel) || (button.dataset.upgrade === 'emitterSpread' && s.emitterSpreadLevel >= C.emitterSpreadMaxLevel) || (button.dataset.upgrade === 'emitterArea' && s.emitterAreaLevel >= C.emitterAreaMaxLevel);
+    const maxed = masteryOwned || (button.dataset.upgrade === 'fistComboRadius' && s.fistComboRadiusLevel >= C.comboFistRadiusMaxLevel + (isCycleUpgradeActive(s, 'cycle3') ? 2 : 0)) || (button.dataset.upgrade === 'needlePierce' && s.needlePierceLevel >= C.needlePierceMaxLevel) || (button.dataset.upgrade === 'emitterSpread' && s.emitterSpreadLevel >= C.emitterSpreadMaxLevel) || (button.dataset.upgrade === 'emitterArea' && s.emitterAreaLevel >= C.emitterAreaMaxLevel);
     button.classList.toggle('hidden', !selected || maxed);
   });
   for (const [name, acquired] of [['auto', s.auto], ['pick', s.pickUnlocked], ['penetration', !!s.penetration], ['ranged', s.rangedUnlocked], ['needle', s.needleUnlocked], ['needleAlt', s.needleAltUnlocked], ['artifact', s.artifactUnlocked]] as const) {
@@ -459,7 +461,7 @@ function render(): void {
   upgrade('pickInfinity').classList.toggle('hidden', s.weapon !== 'pick' || !s.challenge1Completed || s.pickInfinityEnchant);
   upgrade('emitterPierce').classList.toggle('hidden', s.rangedWeapon !== 'emitter' || !s.challenge1Completed || s.emitterPierceUpgrade);
   upgrade('needleFire').classList.toggle('hidden', s.rangedWeapon !== 'needle' || !breachGame.alchemyNodeUnlocked('fire') || s.needleFireUpgrade);
-  const extraRadiusLevels = s.cycleUpgrades.cycle3 ? 2 : 0;
+  const extraRadiusLevels = isCycleUpgradeActive(s, 'cycle3') ? 2 : 0;
   upgrade('spearReach').classList.toggle('hidden', s.weapon !== 'spear' || s.spearReachLevel >= C.spearReachMaxLevel + extraRadiusLevels);
   upgrade('pickReach').classList.toggle('hidden', s.weapon !== 'pick' || s.pickReachLevel >= C.pickReachMaxLevel + extraRadiusLevels);
   for (const name of ['fistMastery', 'pickMastery', 'spearMastery', 'needleMastery', 'emitterMastery']) {
@@ -486,42 +488,39 @@ document.querySelectorAll<HTMLButtonElement>('[data-upgrade]').forEach((button) 
   button.addEventListener('click', () => {
     const name = button.dataset.upgrade as Parameters<typeof breachGame.buy>[0];
     s.seenFeatures[name] = true;
-    if (breachGame.buy(name)) breachGame.save();
+    if (breachGame.bus.invoke('upgrades', { type: 'buy', payload: name })) breachGame.save();
     render();
   });
 });
 document.querySelectorAll<HTMLButtonElement>('[data-alchemy-upgrade]').forEach(button => button.addEventListener('click', () => { s.seenFeatures[`alchemy:${button.dataset.alchemyUpgrade}`] = true; breachGame.save(); render(); }));
-$('#mine').addEventListener('click', () => { breachGame.click(); render(); });
-$('#equip-fists').addEventListener('click', () => { breachGame.equip('fists'); breachGame.save(); render(); });
-$('#equip-pick').addEventListener('click', () => { breachGame.equip('pick'); breachGame.save(); render(); });
-$('#equip-spear').addEventListener('click', () => { breachGame.equip('spear'); breachGame.save(); render(); });
-$('#equip-bombarda').addEventListener('click', () => { breachGame.equip('bombarda'); breachGame.save(); render(); });
-$('#combo-toggle').addEventListener('click', () => { const weapon = s.weapon; if ((weapon === 'fists' || weapon === 'pick' || weapon === 'spear') && (weapon === 'fists' ? s.fistComboUnlocked || (s.challengeArena && s.challengeNumber === 2) : s.challenge2Completed)) { s.combos[weapon] = !s.combos[weapon]; breachGame.save(); render(); } });
+$('#mine').addEventListener('click', () => { breachGame.bus.invoke('gameplay', { type: 'click', payload: null }); render(); });
+$('#equip-fists').addEventListener('click', () => { breachGame.bus.invoke('weapons', { type: 'equip', payload: 'fists' }); breachGame.save(); render(); });
+$('#equip-pick').addEventListener('click', () => { breachGame.bus.invoke('weapons', { type: 'equip', payload: 'pick' }); breachGame.save(); render(); });
+$('#equip-spear').addEventListener('click', () => { breachGame.bus.invoke('weapons', { type: 'equip', payload: 'spear' }); breachGame.save(); render(); });
+$('#equip-bombarda').addEventListener('click', () => { breachGame.bus.invoke('weapons', { type: 'equip', payload: 'bombarda' }); breachGame.save(); render(); });
+$('#combo-toggle').addEventListener('click', () => { if (breachGame.bus.invoke('weapons', { type: 'toggle-combo', payload: null })) { breachGame.save(); render(); } });
 $('.alchemy-help').addEventListener('toggle', () => { if (($('.alchemy-help') as HTMLDetailsElement).open && !s.alchemyHelpSeen) { s.alchemyHelpSeen = true; breachGame.save(); render(); } });
-$('#equip-emitter').addEventListener('click', () => { breachGame.equipRanged('emitter'); breachGame.save(); render(); });
-$('#equip-needle').addEventListener('click', () => { breachGame.equipRanged('needle'); breachGame.save(); render(); });
+$('#equip-emitter').addEventListener('click', () => { breachGame.bus.invoke('weapons', { type: 'equip-ranged', payload: 'emitter' }); breachGame.save(); render(); });
+$('#equip-needle').addEventListener('click', () => { breachGame.bus.invoke('weapons', { type: 'equip-ranged', payload: 'needle' }); breachGame.save(); render(); });
 $('#challenge-1').addEventListener('click', () => openChallengeDetails(1));
 $('#challenge-2').addEventListener('click', () => openChallengeDetails(2));
 $('#challenge-3').addEventListener('click', () => openChallengeDetails(3));
 $('#challenge-4').addEventListener('click', () => openChallengeDetails(4));
-$('#challenge-4-stone').addEventListener('click', () => { if (breachGame.buyChallenge4Modifier('stone')) breachGame.save(); render(); });
-$('#challenge-4-damage').addEventListener('click', () => { if (breachGame.buyChallenge4Modifier('damage')) breachGame.save(); render(); });
-$('#challenge-4-range').addEventListener('click', () => { if (breachGame.buyChallenge4Modifier('range')) breachGame.save(); render(); });
+$('#challenge-4-stone').addEventListener('click', () => { if (breachGame.bus.invoke('challenges', { type: 'modifier', payload: 'stone' })) breachGame.save(); render(); });
+$('#challenge-4-damage').addEventListener('click', () => { if (breachGame.bus.invoke('challenges', { type: 'modifier', payload: 'damage' })) breachGame.save(); render(); });
+$('#challenge-4-range').addEventListener('click', () => { if (breachGame.bus.invoke('challenges', { type: 'modifier', payload: 'range' })) breachGame.save(); render(); });
 $('#challenge-modal-close').addEventListener('click', () => { selectedChallenge = null; render(); });
 $('#challenge-modal').addEventListener('click', (event) => { if (event.target === $('#challenge-modal')) { selectedChallenge = null; render(); } });
 $('#challenge-modal-action').addEventListener('click', () => {
-  if (s.challengeArena && s.challengeNumber === selectedChallenge) breachGame.leaveChallenge1();
-  else if (selectedChallenge === 1) breachGame.enterChallenge1();
-  else if (selectedChallenge === 2) breachGame.enterChallenge2();
-  else if (selectedChallenge === 3) breachGame.enterChallenge3();
-  else if (selectedChallenge === 4) breachGame.enterChallenge4();
+  if (s.challengeArena && s.challengeNumber === selectedChallenge) breachGame.bus.invoke('challenges', { type: 'leave', payload: null });
+  else if (selectedChallenge !== null) breachGame.bus.invoke('challenges', { type: 'enter', payload: selectedChallenge });
   selectedChallenge = null;
   breachGame.save(); render();
 });
-$('#ranged-burst').addEventListener('click', () => { if (breachGame.fireRangedBurst()) breachGame.save(); render(); });
+$('#ranged-burst').addEventListener('click', () => { if (breachGame.bus.invoke('weapons', { type: 'burst', payload: null })) breachGame.save(); render(); });
 
 function togglePause(): void {
-  s.paused = !s.paused;
+  breachGame.bus.setPaused(!s.paused);
   lastTick = performance.now();
   if (s.paused) { if (game.scene.isActive('BreachScene')) game.scene.pause('BreachScene'); }
   else if (game.scene.isPaused('BreachScene')) { (game.scene.getScene('BreachScene') as BreachScene).resetInterpolation(); game.scene.resume('BreachScene'); }

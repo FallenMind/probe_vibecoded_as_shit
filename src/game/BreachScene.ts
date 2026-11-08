@@ -45,7 +45,7 @@ export class BreachScene extends Phaser.Scene {
     this.graphics = this.add.graphics();
     this.pickSprite = this.add.image(0, 0, 'metal-pickaxe').setOrigin(0.15, 0.85).setVisible(false);
     this.spearSprite = this.add.image(0, 0, 'metal-spear').setOrigin(0.2, 0.5).setVisible(false);
-    this.input.on('pointerdown', () => breachGame.click());
+    this.input.on('pointerdown', () => breachGame.bus.invoke('gameplay', { type: 'click', payload: null }));
     this.resetInterpolation();
   }
 
