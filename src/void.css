@@ -1,0 +1,81 @@
+.void-effect {
+  border-color: #665875 !important;
+  box-shadow: inset 0 0 16px #160e2480, 0 0 8px #8870a022;
+  animation: void-breathe 3.8s ease-in-out infinite;
+}
+
+.upgrade.void-effect { background-image: linear-gradient(145deg, #d6c9b3, #c3b5a4 55%, #b8acc0); }
+.upgrade.void-effect:disabled { background-image: linear-gradient(145deg, #20252d, #1b2028); }
+.challenge-card.attention {
+  border-color: #9982ac !important;
+  color: #d5c9e5;
+  box-shadow: 0 0 0 1px #947eaa40, inset 0 0 14px #281d38;
+  animation: void-breathe 2.2s ease-in-out infinite;
+}
+
+@keyframes void-breathe {
+  50% { box-shadow: inset 0 0 18px #241a3580, 0 0 13px #9c82c244; }
+}
+
+.equipment-button.broken {
+  position: relative;
+  color: #8f83a3;
+  border-color: #665875 !important;
+  overflow: hidden;
+}
+.equipment-button.broken::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(135deg, transparent 44%, #a04b6266 44%, #a04b6266 56%, transparent 56%),
+    repeating-linear-gradient(45deg, #66587514 0 6px, transparent 6px 12px);
+  pointer-events: none;
+}
+.equipment-button.broken::before {
+  content: '✕';
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #c98aa8;
+  font-weight: 700;
+  pointer-events: none;
+}
+
+.void-overlay {
+  position: fixed;
+  z-index: 100;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, #1a14245c, #05070bc9);
+  backdrop-filter: blur(2px);
+  opacity: 1;
+  transition: opacity .7s ease;
+}
+
+.void-overlay.fading { opacity: 0; }
+
+.void-dialog { width: min(900px, 100%); text-align: center; }
+.void-dialog p {
+  margin: 12px 0;
+  color: #e7e2ed;
+  font-size: clamp(24px, 5vw, 52px);
+  font-weight: 650;
+  letter-spacing: -.025em;
+  line-height: 1.25;
+  text-shadow: 0 0 18px #baa2d766, 0 2px 22px #000;
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity .8s ease, transform .8s ease;
+}
+
+.void-dialog p.visible { opacity: 1; transform: translateY(0); }
+
+@media (prefers-reduced-motion: reduce) {
+  .void-effect, .challenge-card.attention { animation: none; }
+  .void-dialog p { transition: none; }
+}

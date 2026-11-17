@@ -92,9 +92,9 @@ test('магазин и дальнее оружие подключены к об
 test('улучшения оружия находятся под своим выбором и меняются независимо', () => {
   const previousDocument = globalThis.document, elements = new Map();
   globalThis.document = { getElementById(id) {
-    if (!elements.has(id)) elements.set(id, { innerHTML: '', textContent: '', style: {}, classList: { toggle() {} }, setAttribute() {} });
+    if (!elements.has(id)) elements.set(id, { innerHTML: '', textContent: '', style: {}, classList: { toggle() {} }, setAttribute() {}, toggleAttribute() {}, querySelectorAll: () => [] });
     return elements.get(id);
-  } };
+  }, querySelector: () => null };
   try {
     const game = new FrameworkGame(), run = getRun(game.bus.read());
     run.furthest = 20;
@@ -118,16 +118,27 @@ test('улучшения оружия находятся под своим вы�
   } finally { globalThis.document = previousDocument; }
 });
 
-test('алхимия конвертирует ресурсы и кристаллизация использует 100 воды', () => {
+test('алхимия конвертирует ресурсы и кристаллизация списывает 95 из 100 воды', () => {
   const game = new FrameworkGame();
   getRun(game.bus.read()).furthest = 20;
   game.bus.update(s => { s.resources.stone.amount = 100; s.resources.water.amount = 100; });
-  assert.equal(game.toggleRecipe('earth'), true);
   game.advance(0.5);
   assert.ok(game.bus.read().resources.earth.amount > 0);
   assert.equal(game.bus.invoke('alchemy.actions', { type: 'exchange', payload: 'crystallize' }), true);
-  assert.equal(game.bus.read().resources.water.amount, 0);
+  assert.equal(game.bus.read().resources.water.amount, 5);
   assert.equal(game.bus.read().resources.crystals.amount, 1);
+});
+
+test('автогенерация кристаллов тратит воду и выключается по умолчанию', () => {
+  const game = new FrameworkGame(), run = getRun(game.bus.read());
+  assert.equal(run.crystalFlow, false);
+  run.challengeDone['3'] = true;
+  game.bus.update(s => { s.resources.water.amount = 1000; });
+  assert.equal(game.bus.invoke('gameplay', { type: 'crystal-flow', payload: null }), true);
+  game.advance(1);
+  game.advance(1);
+  assert.ok(game.bus.read().resources.water.amount < 1000 - 2 * game.config.alchemy.buffs.crystalFlowWaterPerSecond + 1);
+  assert.ok(game.bus.read().resources.crystals.amount >= 2 - 0.01);
 });
 
 test('испытание сохраняет карту и награду после восстановления забега', () => {
@@ -255,8 +266,10 @@ test('откат забега передаёт старую карту и поз
 
 test('алхимические лимиты меняются улучшением и сохраняют избыток при подавлении', () => {
   const game = new FrameworkGame();
-  getRun(game.bus.read()).furthest = 20;
-  game.bus.update(s => { s.resources.crystals.amount = 20; });
+  const run = getRun(game.bus.read());
+  run.furthest = 20;
+  run.unlocked.water = true;
+  game.bus.update(s => { s.resources.crystals.amount = 60; });
   assert.equal(game.buyUpgrade('alchemy.water1'), true);
   assert.equal(game.bus.read().resources.water.capacity, 500);
   game.bus.update(s => { s.resources.water.amount = 400; });
@@ -278,7 +291,7 @@ test('элементализация расходует Воздух и доба
     const tile = Object.values(game.bus.read().tiles)[0];
     new StateMapAccess(game.bus).damageTile(tile.id, tile.health);
     assert.equal(game.bus.read().resources.elementalStone.amount, 1);
-    assert.equal(game.bus.read().resources.stone.amount, 0);
+    assert.equal(game.bus.read().resources.stone.amount, 1);
     game.advance(0.1);
     assert.ok(game.bus.read().resources.air.amount < 10);
   } finally { Math.random = random; }
@@ -287,7 +300,9 @@ test('элементализация расходует Воздух и доба
 test('перегрузка Земли оплачивается один раз и усиливает каждый второй добытый камень', () => {
   const game = new FrameworkGame(), run = getRun(game.bus.read());
   run.furthest = 20;
-  game.bus.update(s => { s.resources.earth.amount = 4000; s.resources.water.amount = 100; });
+  run.unlocked.water = true;
+  game.bus.update(s => { s.resources.ore.amount = 50000; s.resources.earth.amount = 4000; s.resources.water.amount = 300; });
+  assert.equal(game.buyUpgrade('alchemy.earth-overload'), true);
   assert.equal(game.bus.invoke('gameplay', { type: 'earth-overload', payload: null }), true);
   assert.equal(game.bus.invoke('gameplay', { type: 'earth-overload', payload: null }), false);
   assert.equal(game.bus.read().resources.earth.amount, 0);
@@ -299,6 +314,45 @@ test('перегрузка Земли оплачивается один раз �
   game.advance(0.02);
   assert.equal(run.overloadRemaining, 0);
   assert.equal(run.overloadUsed, false);
+});
+
+test('изломы поднимают лимиты, а бесконечность открыта без Спектра', () => {
+  const game = new FrameworkGame(), run = getRun(game.bus.read());
+  assert.equal(game.buyUpgrade('fracture.earth'), false);
+  assert.equal(game.buyUpgrade('infinity.space-folding'), false);
+  for (const id of [1, 2, 3, 4]) run.challengeDone[String(id)] = true;
+  assert.ok(!game.bus.read().upgradeLevels['spectrum.approach']);
+  game.bus.update(s => { s.resources.crystals.amount = 1000; s.resources.breakthrough.amount = 100; s.resources.earth.amount = 10000; });
+  assert.equal(game.buyUpgrade('infinity.space-folding'), true);
+  assert.equal(game.buyUpgrade('fracture.earth'), true);
+  assert.equal(game.bus.read().resources.earth.capacity, 20000);
+  assert.equal(game.buyUpgrade('fracture.water'), true);
+  assert.equal(game.bus.read().resources.water.capacity, 2000);
+  assert.equal(game.buyUpgrade('fracture.fire'), false);
+  assert.equal(game.buyUpgrade('infinity.breakthrough'), false);
+  game.bus.update(s => { s.upgradeLevels['fists.combo'] = 1; s.upgradeLevels['fists.damage'] = 5; s.upgradeLevels['fists.splash'] = 1; s.resources.air.amount = 1000; });
+  assert.equal(game.buyUpgrade('infinity.breakthrough'), true);
+  const levels = game.bus.read().upgradeLevels;
+  for (const key of Object.keys(levels)) assert.ok(!key.startsWith('fists.'), `улучшение кулаков должно быть потрачено: ${key}`);
+  assert.equal(run.fistsSacrificed, true);
+});
+
+test('камни испытания 3 прочны как на последнем слое, включая регенерацию', () => {
+  const game = new FrameworkGame(), run = getRun(game.bus.read());
+  const world = game.config.world;
+  const expected = (() => { let hp = world.stoneHealth; for (let i = 0; i < Math.floor((world.layers - 1) / world.hpGrowthEveryLayers); i++) hp += world.hpGrowthLinear + hp * world.hpGrowthFraction; return hp; })();
+  run.furthest = 45;
+  run.challengeDone['1'] = true;
+  assert.equal(game.enterChallenge(3), true);
+  const tiles = Object.values(game.bus.read().tiles);
+  assert.ok(tiles.length > 0);
+  for (const tile of tiles) assert.ok(Math.abs(tile.maxHealth - expected) < 1e-6, `стартовый камень ${tile.maxHealth} != ${expected}`);
+  const victim = tiles[0];
+  new StateMapAccess(game.bus).damageTile(victim.id, victim.health);
+  game.advance(1.1);
+  const regenerated = game.bus.read().tiles[victim.id];
+  assert.ok(regenerated, 'уничтоженный камень должен возродиться');
+  assert.ok(Math.abs(regenerated.maxHealth - expected) < 1e-6, `возрождённый камень ${regenerated.maxHealth} != ${expected}`);
 });
 
 test('старое сохранение каркаса получает значения новых алхимических переключателей', () => {

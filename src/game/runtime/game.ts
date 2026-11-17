@@ -2,7 +2,7 @@ import { createDraftFramework } from '../bootstrap';
 import { DEFAULT_CONFIG } from '../config/defaults';
 import type { FrameworkConfig } from '../config/schema';
 import type { GameModule, StateAccess } from '../core/contracts';
-import { EARTH_MARKED_TAG, type GameCommand, type GameState, type TileState } from '../core/model';
+import { EARTH_MARKED_TAG, type GameCommand, type GameState, type ResourceAmounts, type TileState } from '../core/model';
 import { StateBus } from '../core/stateBus';
 import { OneTimeUpgrade, RepeatableUpgrade } from '../upgrades/upgrade';
 import { UpgradeModule } from '../upgrades/upgradeModule';
@@ -17,8 +17,12 @@ export interface NativeRun {
   layer: number; furthest: number; completions: number; boss: number; boundary: number | null;
   clicks: number; message: string; unlocked: Record<string, boolean>; challengeDone: Record<string, boolean>;
   challenge: number; challengeTime: number; challengeGoal: number; regenClock: number; earthBuff: boolean;
-  elementalization: boolean; overloadRemaining: number; overloadUsed: boolean; overloadCount: number; endChargeRemaining: number;
-  stimpackRemaining: number;
+  elementalization: boolean; crystalFlow: boolean; overloadRemaining: number; overloadUsed: boolean; overloadCount: number; endChargeRemaining: number;
+  endChargeDuration: number; boundaryChargeTargetLayer: number | null;
+  boundaryReturnRemaining: number;
+  fractureSeen: Record<string, boolean>; fistsSacrificed: boolean;
+  stimpackRemaining: number; postChallenge4Pending: boolean; postChallenge4DialogueStage: number; postChallenge4DialogueRemaining: number;
+  voidDialogueId: string | null; voidUnlockSeen: Record<string, boolean>;
   backup: { maps: GameState['maps']; tiles: GameState['tiles']; characters: GameState['characters']; resources: GameState['resources']; layer: number; boss: number; boundary: number | null } | null;
 }
 export const equipment = [
@@ -35,7 +39,7 @@ export const upgradeItems = [
     { id: `${id}.damage`, name: `Сила: ${equipment.find(item => item.id === id)!.name}`, description: 'Урон выбранного оружия.', key: `weapon.${id}.damage`, value: ({ fists: 2, pick: 1, spear: 1.5, needle: 0.35, emitter: 0.8, bombarda: 0.8 } as Record<string, number>)[id], cost: id === 'pick' ? 250 : id === 'spear' ? 500 : 8, maxLevel: 100 },
     { id: `${id}.speed`, name: `Скорость: ${equipment.find(item => item.id === id)!.name}`, description: 'Скорость атак выбранного оружия.', key: `weapon.${id}.attackSpeed`, value: ({ fists: 0.25, pick: 0.25, spear: 0.2, needle: 1.1, emitter: 0.3, bombarda: 0.2 } as Record<string, number>)[id], cost: id === 'spear' || id === 'emitter' ? 500 : id === 'fists' || id === 'needle' ? 50 : 250, maxLevel: id === 'needle' ? 50 : 30 },
   ]),
-  ...(['fists', 'pick', 'spear', 'emitter'] as const).map(id => ({ id: `${id}.radius`, name: `Радиус: ${equipment.find(item => item.id === id)!.name}`, description: 'Увеличивает область удара или комбо.', key: `weapon.${id}.splash.radius`, value: id === 'emitter' ? 0.1 : 1, cost: id === 'fists' ? 0 : 500, maxLevel: id === 'fists' ? 7 : id === 'emitter' ? 2 : 6 })),
+  ...(['fists', 'pick', 'spear', 'emitter'] as const).map(id => ({ id: `${id}.radius`, name: id === 'fists' ? 'Радиус комбо: Кулаки' : `Радиус: ${equipment.find(item => item.id === id)!.name}`, description: id === 'fists' ? 'Увеличивает область комбо-ударов кулаками.' : 'Увеличивает область удара или комбо.', key: id === 'fists' ? 'weapon.fists.combo.splash.radius' : `weapon.${id}.splash.radius`, value: id === 'emitter' ? 0.1 : 1, cost: id === 'fists' ? 0 : 500, maxLevel: id === 'fists' ? 7 : id === 'emitter' ? 2 : 6 })),
   { id: 'bombarda.radius', name: 'Bombarda splash radius', description: 'Base radius 3, upgrades to 7; Cycle 3 adds 2 more.', key: 'weapon.bombarda.splash.radius', value: 1, cost: 500, maxLevel: 6 },
   { id: 'bombarda.range', name: 'Дальность атаки: Бомбарда', description: 'Увеличивает расстояние, на котором Бомбарда может выбирать цель.', key: 'weapon.bombarda.interactionRange', value: 1, cost: 500, maxLevel: 6 },
   { id: 'penetration', name: 'Пробиваемость тяжёлой породы', description: 'Повышает урон сплеша по тяжёлому камню: от 40% до 100% за 5 уровней. Действует на всё оружие, включая взрыв Бомбарды.', key: 'weapon.armorPenetration', value: 0, cost: 250, maxLevel: 5 },
@@ -48,7 +52,7 @@ export const cycleUpgradeItems = [
   { id: 'cycle.4', group: 1, name: 'Старт после босса', description: 'Начинайте цикл после первого босса.', cost: 2 },
   { id: 'cycle.5', group: 2, name: 'Дальний контур', description: 'Урон дальнего оружия ×1,5.', cost: 1 },
   { id: 'cycle.6', group: 2, name: 'Acceleration rhythm', description: 'Breakthrough upgrade: pick and spear combos trigger sooner; Bombarda combo cadence drops from 5 attacks to 2.', cost: 1 },
-  { id: 'cycle.7', group: 2, name: 'Водный запас', description: '100 Воды в начале цикла.', cost: 2 },
+  { id: 'cycle.7', group: 2, name: 'Перегрузка цикла', description: 'Каждый завершённый цикл бесплатно активирует Перегрузку земли.', cost: 2 },
   { id: 'cycle.8', group: 2, name: 'Снятие печати босса', description: 'Боссы без множителя здоровья.', cost: 2 },
   { id: 'cycle.9', group: 3, name: 'Каменный резерв', description: 'Камень за добычу +10%.', cost: 2 },
   { id: 'cycle.10', group: 3, name: 'Стабилизатор породы', description: 'Урон по твёрдой породе +10%.', cost: 4 },
@@ -59,6 +63,14 @@ export const cycleUpgradeItems = [
   { id: 'cycle.15', group: 4, name: 'Сборочная волна', description: 'Вместимость буфера кликов +10%.', cost: 60 },
   { id: 'cycle.16', group: 4, name: 'Наследие цикла', description: 'Стоимость повторяемых улучшений −3%.', cost: 250 },
 ] as const;
+export const fractureItems = [
+  { id: 'fracture.earth', element: 'earth', index: 0, capacity: 20000, requires: '' },
+  { id: 'fracture.water', element: 'water', index: 1, capacity: 2000, requires: 'fracture.earth' },
+  { id: 'fracture.air', element: 'air', index: 2, capacity: 2000, requires: 'fracture.water' },
+  { id: 'fracture.fire', element: 'fire', index: 3, capacity: 2000, requires: 'fracture.air' },
+] as const;
+export const allChallengesDone = (run: { challengeDone: Record<string, boolean> }): boolean => [1, 2, 3, 4].every(id => run.challengeDone[String(id)]);
+const fractureElementName = (element: string): string => ({ earth: 'Земли', water: 'Воды', air: 'Воздуха', fire: 'Огня' })[element] ?? element;
 export const uniqueItems = [
   { id: 'fists.elemental', name: 'Земляной резонанс', resource: 'earth', cost: 60 },
   { id: 'pick.elemental', name: 'Вечное зачарование кирки', resource: 'earth', cost: 60 },
@@ -78,6 +90,13 @@ export const alchemyItems = [
   { id: 'alchemy.fire1', name: 'Камера Огня I', resource: 'fire', cost: 25, target: 'fire', capacity: 100 },
   { id: 'alchemy.air-speed', name: 'Воздушный ускоритель', resource: 'fire', cost: 25, target: 'air', speedMultiplier: 2 },
 ] as const;
+const voidUpgradeCosts = { 'infinity.radius': { water: 1000 }, 'infinity.stone-shatter': { fire: 1000 } } as const;
+const foldingCosts: readonly ResourceAmounts[] = [
+  { earth: 10000, crystals: 50 },
+  { earth: 10000, water: 2000 },
+  { earth: 10000, water: 2000, air: 1000 },
+  { earth: 10000, water: 2000, air: 1000, fire: 1000 },
+];
 const upgrades = (config: FrameworkConfig) => [
   ...upgradeItems.map(item => new RepeatableUpgrade({ id: item.id, name: item.name, description: item.description,
     maxLevel: 'maxLevel' in item && typeof item.maxLevel === 'number' ? item.maxLevel : 1000, baseCost: { ore: item.cost },
@@ -96,7 +115,7 @@ const upgrades = (config: FrameworkConfig) => [
   new OneTimeUpgrade({ id: 'fists.combo', name: 'Ударная связка кулаков', description: 'Включает комбо-удары кулаков.',
     baseCost: { ore: 50 }, costMultiplier: 1, requiresUpgrades: {}, requiresResources: {}, tags: ['weapon', 'fists', 'combo'], effects: [] }),
   new OneTimeUpgrade({ id: 'fists.splash', name: 'Ударная волна', description: 'Обычные удары кулаков задевают соседние камни в радиусе 1 клетки с затуханием урона к краю.',
-    baseCost: { ore: 500 }, costMultiplier: 1, requiresUpgrades: { 'fists.radius': 1 }, requiresResources: {}, tags: ['weapon', 'fists', 'splash'],
+    baseCost: { ore: 150 }, costMultiplier: 1, requiresUpgrades: { 'fists.radius': 1 }, requiresResources: {}, tags: ['weapon', 'fists', 'splash'],
     effects: [{ type: 'stat', key: 'weapon.fists.splash.radius', stage: 'baseFlat', value: 1 }] }),
   ...uniqueItems.map(item => new OneTimeUpgrade({ id: item.id, name: item.name, description: item.id === 'needle.elemental' ? 'Поджигает поражённую породу до её разрушения.' : item.id === 'pick.elemental' ? 'Постоянно чарует кирку и повышает пробитие элементальной породы.' : 'Открывает частичное пробитие элементальной породы без расхода стихии при атаке.',
     baseCost: { [item.resource]: item.cost }, costMultiplier: 1, requiresUpgrades: {}, requiresResources: {}, tags: ['unique', item.id.split('.')[0]],
@@ -115,7 +134,7 @@ const upgrades = (config: FrameworkConfig) => [
     baseCost: config.alchemy.buffs.fireReactionUnlockCosts.vulcanization, costMultiplier: 1, requiresUpgrades: {}, requiresResources: {}, tags: ['alchemy', 'fire', 'vulcanization'], effects: [] }),
   new OneTimeUpgrade({ id: 'alchemy.decomposition-unlock', name: 'Разрешение: Разложение элементов', description: 'Открывает переключаемую реакцию Разложения элементов.',
     baseCost: config.alchemy.buffs.fireReactionUnlockCosts.decomposition, costMultiplier: 1, requiresUpgrades: {}, requiresResources: {}, tags: ['alchemy', 'fire', 'decomposition'], effects: [] }),
-  new RepeatableUpgrade({ id: 'alchemy.fire-speed', name: 'Ускоритель Огня', description: 'Скорость производства Огня ×1,5 за уровень. Доступен после Подхода теоремы Спектра.',
+  new RepeatableUpgrade({ id: 'alchemy.fire-speed', name: 'Ускоритель Огня', description: 'Скорость производства Огня ×1,5 за уровень.',
     maxLevel: 10, baseCost: { fire: 25 }, costMultiplier: 1.8, requiresUpgrades: {}, requiresResources: {}, tags: ['alchemy', 'infinity', 'fire'],
     effects: [{ type: 'stat', key: 'alchemy.fire.productionSpeed', stage: 'mult', value: 1.5 }] }),
   new RepeatableUpgrade({ id: 'cycle.expansion', name: 'Расширение карты', description: 'Увеличивает сторону карты при следующем забеге.',
@@ -141,20 +160,41 @@ const upgrades = (config: FrameworkConfig) => [
       : item.id === 'cycle.14' ? [{ type: 'stat' as const, key: 'weapon.elemental.damage', stage: 'outputMult' as const, value: 1.1 }]
       : item.id === 'cycle.11' ? [{ type: 'stat' as const, key: 'alchemy.productionSpeed', stage: 'mult' as const, value: 1.05 }]
       : [] })),
-  new OneTimeUpgrade({ id: 'spectrum.approach', name: 'Подход теоремы Спектра', description: 'Открывает улучшения бесконечности.',
-    baseCost: { crystals: 1000, earth: 1000, water: 1000, air: 1000, fire: 1000 }, costMultiplier: 1, requiresUpgrades: {}, requiresResources: {}, tags: ['infinity', 'spectrum'], effects: [] }),
-  new RepeatableUpgrade({ id: 'infinity.breakthrough', name: 'Множитель очков прорыва', description: 'Удваивает очки прорыва за завершённый цикл.',
-    maxLevel: 20, baseCost: { breakthrough: 1 }, costMultiplier: 2, requiresUpgrades: {}, requiresResources: {}, tags: ['infinity'],
+  new OneTimeUpgrade({ id: 'spectrum.approach', name: 'Применение теоремы Спектра', description: 'Апофеосис.',
+    baseCost: { crystals: 1000, earth: 10000, water: 1000, air: 1000, fire: 1000 }, costMultiplier: 1,
+    requiresUpgrades: { 'infinity.radius': 1, 'infinity.stone-shatter': 1, 'infinity.breakthrough': 1, 'infinity.space-folding': 1 }, requiresResources: {}, tags: ['infinity', 'spectrum'], effects: [] }),
+  new RepeatableUpgrade({ id: 'infinity.breakthrough', name: 'Множитель очков прорыва', description: 'Удваивает очки прорыва за завершённый цикл. После II уровня открывает нестабильную территорию до 100-го квадрата.',
+    maxLevel: 20, baseCost: { air: 200, crystals: 200 }, costMultiplier: 1, requiresUpgrades: {}, requiresResources: {}, tags: ['infinity', 'repeatable'],
+    priceHandler: ({ level }): ResourceAmounts => {
+      if (level === 0) return { air: 200, crystals: 200 };
+      const targetLevel = level + 1;
+      return { air: 1000, crystals: 200 * targetLevel, breakthrough: 10 ** targetLevel };
+    },
     effects: [{ type: 'stat', key: 'progression.breakthrough', stage: 'outputMult', value: 2 }] }),
-  new RepeatableUpgrade({ id: 'infinity.space-folding', name: 'Складывание пространства', description: 'Здоровье породы ×2; каждый уровень позволяет пройти на одну карту дальше за зачистку (уровень I — сразу 2 карты). Максимум IV.',
-    maxLevel: 4, baseCost: { breakthrough: 1 }, costMultiplier: 2, requiresUpgrades: {}, requiresResources: {}, tags: ['infinity', 'world'],
+  new RepeatableUpgrade({ id: 'infinity.space-folding', name: 'Складывание пространства', description: 'Прочность породы ×1,5 за уровень; зачистка переносит через вдвое больше слоёв за уровень. Уровни: ×2, ×4, ×8 и ×16; максимум IV.',
+    maxLevel: 4, baseCost: foldingCosts[0], costMultiplier: 1, requiresUpgrades: {}, requiresResources: {}, tags: ['infinity', 'world'],
+    priceHandler: ({ level }): ResourceAmounts => ({ ...(foldingCosts[level] ?? {}) }),
     effects: [{ type: 'stat', key: 'world.space-folding', stage: 'baseFlat', value: 1 }] }),
+  new OneTimeUpgrade({ id: 'infinity.radius', name: 'Расширенный взрыв II', description: 'Ещё раз добавляет +2 к радиусу удара или комбо всего оружия. Открывается после цикла 3 и завершения всех испытаний.',
+    baseCost: voidUpgradeCosts['infinity.radius'], costMultiplier: 1, requiresUpgrades: { 'cycle.3': 1 }, requiresResources: {}, tags: ['infinity', 'void'],
+    effects: [{ type: 'stat' as const, key: 'weapon.splash.radius', stage: 'baseFlat' as const, value: 2 }] }),
+  new OneTimeUpgrade({ id: 'infinity.stone-shatter', name: 'Раскол породы', description: 'Прочность камня уменьшается вдвое на всех картах. Открывается в ячейке прежнего «Запаса воды» после цикла 7 и завершения всех испытаний.',
+    baseCost: voidUpgradeCosts['infinity.stone-shatter'], costMultiplier: 1, requiresUpgrades: { 'cycle.7': 1 }, requiresResources: {}, tags: ['infinity', 'void'], effects: [] }),
+  ...fractureItems.map(item => new OneTimeUpgrade({ id: item.id, name: `Излом ${fractureElementName(item.element)}`,
+    description: `Сломанный лимит: вместимость ${fractureElementName(item.element)} вырастает до ${item.capacity.toLocaleString('ru-RU')}.`,
+    baseCost: { crystals: 50 * 2 ** item.index, breakthrough: 2 * 3 ** item.index }, costMultiplier: 1,
+    requiresUpgrades: item.requires ? { [item.requires]: 1 } : {}, requiresResources: {}, tags: ['fracture', 'void', item.element],
+    effects: [{ type: 'stat' as const, key: `alchemy.${item.element}.capacity`, stage: 'baseFlat' as const, value: item.capacity - (config.alchemy.resources[item.element].capacity ?? 0) }] })),
 ];
 
 function freshRun(): NativeRun {
   return { layer: 0, furthest: 0, completions: 0, boss: 0, boundary: null, clicks: 0, message: 'Нажимайте на карту, чтобы ускорить добычу.',
     unlocked: { fists: true }, challengeDone: {}, challenge: 0, challengeTime: 0, challengeGoal: 0, regenClock: 0, earthBuff: false,
-    elementalization: false, overloadRemaining: 0, overloadUsed: false, overloadCount: 0, endChargeRemaining: 0, stimpackRemaining: 0, backup: null };
+    elementalization: false, crystalFlow: false, overloadRemaining: 0, overloadUsed: false, overloadCount: 0, endChargeRemaining: 0,
+    endChargeDuration: 0, boundaryChargeTargetLayer: null, boundaryReturnRemaining: 0, stimpackRemaining: 0,
+    fractureSeen: {}, fistsSacrificed: false,
+    postChallenge4Pending: false, postChallenge4DialogueStage: 0, postChallenge4DialogueRemaining: 0,
+    voidDialogueId: null, voidUnlockSeen: {}, backup: null };
 }
 export function getRun(state: { readonly moduleData: Readonly<Record<string, unknown>> }): NativeRun { return state.moduleData.run as NativeRun; }
 function isCycleActive(state: {
@@ -165,17 +205,36 @@ function isCycleActive(state: {
   const suppressed = Object.values(state.upgradeSuppressions ?? {}).some(rule => rule.all || rule.upgradeIds.includes(id) || rule.tags.includes('cycle'));
   return (state.upgradeLevels[id] ?? 0) > 0 && state.upgradeEnabled[id] !== false && !suppressed;
 }
+function voidUnlockRequirementsMet(state: Pick<GameState, 'upgradeLevels'>, run: NativeRun, id: string): boolean {
+  if (id === 'spectrum.approach') return allChallengesDone(run) && ['infinity.radius', 'infinity.stone-shatter', 'infinity.breakthrough', 'infinity.space-folding'].every(upgrade => (state.upgradeLevels[upgrade] ?? 0) > 0);
+  if (!allChallengesDone(run)) return false;
+  if (id === 'infinity.radius') return (state.upgradeLevels['cycle.3'] ?? 0) > 0;
+  if (id === 'infinity.stone-shatter') return (state.upgradeLevels['cycle.7'] ?? 0) > 0;
+  if (id === 'infinity.breakthrough' || id === 'infinity.space-folding') return true;
+  return false;
+}
 function scaledValue(base: number, increment: number, fraction: number, steps: number): number {
   let value = base;
   for (let i = 0; i < steps; i++) value += increment + value * fraction;
   return value;
 }
 function bossLayer(layer: number, config: FrameworkConfig): boolean { return (layer + 1) % config.world.bossEveryLayers === 0 && layer + 1 < config.world.layers; }
+function playableLayerCount(state: { readonly upgradeLevels: Readonly<Record<string, number>> }, config: FrameworkConfig): number {
+  return (state.upgradeLevels['infinity.breakthrough'] ?? 0) >= 2 ? config.world.extendedLayers : config.world.layers;
+}
 function finalPlayableLayer(state: { readonly upgradeLevels: Readonly<Record<string, number>> }, config: FrameworkConfig): number {
-  const folding = Math.min(4, state.upgradeLevels['infinity.space-folding'] ?? 0);
-  if (!folding) return config.world.layers - 1;
-  const stride = folding + 1;
-  return Math.max(0, Math.floor(config.world.layers / stride) - 1) * stride;
+  const folding = Math.min(4, Math.max(0, Math.floor(state.upgradeLevels['infinity.space-folding'] ?? 0)));
+  const layerCount = playableLayerCount(state, config);
+  if (layerCount <= config.world.outsideBoundaryLayer || !folding) return layerCount - 1;
+  const stride = 2 ** folding;
+  return config.world.outsideBoundaryLayer + Math.floor((layerCount - 1 - config.world.outsideBoundaryLayer) / stride) * stride;
+}
+function nextFoldedLayer(currentLayer: number, folding: number, config: FrameworkConfig): number {
+  const borderLayer = config.world.outsideBoundaryLayer - 1;
+  if (currentLayer === borderLayer) return currentLayer + 1;
+  const stride = folding > 0 ? 2 ** folding : 1;
+  const next = currentLayer + stride;
+  return currentLayer < borderLayer && next > borderLayer ? borderLayer : next;
 }
 
 class NativeGameplay implements GameModule {
@@ -190,8 +249,51 @@ class NativeGameplay implements GameModule {
   onRegister(bus: StateAccess): void { bus.update(s => {
     s.moduleData.run ??= freshRun();
     const run = s.moduleData.run as NativeRun;
-    run.elementalization ??= false; run.overloadRemaining ??= 0; run.overloadUsed ??= false; run.overloadCount ??= 0; run.endChargeRemaining ??= 0; run.stimpackRemaining ??= 0;
-  }); }
+    run.elementalization ??= false; run.crystalFlow ??= false; run.overloadRemaining ??= 0; run.overloadUsed ??= false; run.overloadCount ??= 0;
+    run.endChargeRemaining ??= 0; run.endChargeDuration ??= 0; run.boundaryChargeTargetLayer ??= null;
+    run.boundaryReturnRemaining ??= 0; run.stimpackRemaining ??= 0;
+    const savedWaterCapacity = s.resources.water?.capacity ?? 0;
+    const baseWaterCapacity = this.config.alchemy.resources.water.capacity ?? 0;
+    if ((s.upgradeLevels['alchemy.water1'] ?? 0) > 0 || savedWaterCapacity > baseWaterCapacity) run.unlocked.water = true;
+    run.fractureSeen ??= {}; run.fistsSacrificed ??= false;
+    run.postChallenge4Pending ??= false; run.postChallenge4DialogueStage ??= 0; run.postChallenge4DialogueRemaining ??= 0;
+    run.voidDialogueId ??= run.postChallenge4DialogueStage > 0 ? 'postChallenge4' : null; run.voidUnlockSeen ??= {};
+    if (!run.challenge && run.layer >= this.config.world.outsideBoundaryLayer && (s.upgradeLevels['infinity.breakthrough'] ?? 0) >= 2
+      && (run.boundary === null || run.boundary > this.config.world.outsideBoundarySeconds)) run.boundary = this.config.world.outsideBoundarySeconds;
+  }); this.ensureBoundaryGate(bus); }
+  ensureBoundaryGate(bus: StateAccess): void {
+    const state = bus.read(), run = getRun(state), map = Object.values(state.maps)[0];
+    const extended = (state.upgradeLevels['infinity.breakthrough'] ?? 0) >= 2;
+    if (!map || run.challenge || !extended || map.layer < this.config.world.outsideBoundaryLayer - 1
+      || map.layer >= finalPlayableLayer(state, this.config)) return;
+    const hasGate = Object.values(state.tiles).some(tile => tile.mapId === map.id && tile.tags.includes('boundary-gate'));
+    if (hasGate) {
+      if (!map.tags.includes('boundary-exit')) bus.update(s => { s.maps[map.id]?.tags.push('boundary-exit'); });
+      return;
+    }
+    const x = Math.floor(map.width / 2), y = 0, id = `${map.id}:${x}:${y}`;
+    const existing = state.tiles[id];
+    const folding = Math.min(4, Math.max(0, Math.floor(state.upgradeLevels['infinity.space-folding'] ?? 0)));
+    const shatter = (state.upgradeLevels['infinity.stone-shatter'] ?? 0) > 0 && state.upgradeEnabled['infinity.stone-shatter'] !== false
+      ? this.config.world.stoneShatterFactor : 1;
+    const hp = scaledValue(this.config.world.stoneHealth, this.config.world.hpGrowthLinear, this.config.world.hpGrowthFraction,
+      Math.floor(run.layer / this.config.world.hpGrowthEveryLayers))
+      * this.config.world.foldingHealthMultiplier ** folding * this.config.world.boundaryGateHealthMultiplier * shatter;
+    bus.update(s => {
+      const currentMap = s.maps[map.id];
+      if (currentMap && !currentMap.tags.includes('boundary-exit')) currentMap.tags.push('boundary-exit');
+      const tile = s.tiles[id];
+      if (tile) {
+        tile.kind = 'boundary'; tile.armor = 0;
+        tile.health *= this.config.world.boundaryGateHealthMultiplier;
+        tile.maxHealth = tile.health;
+        if (!tile.tags.includes('boundary-gate')) tile.tags.push('boundary-gate');
+      }
+      else { s.tiles[id] = { id, mapId: map.id, position: { x, y }, kind: 'boundary', health: hp, maxHealth: hp, armor: 0, tags: ['boundary-gate'] }; s.tileRevision++; }
+    });
+    if (!existing) bus.emit({ type: 'tile.added', source: this.id, payload: { mapId: map.id, tileId: id, position: { x, y } } });
+    bus.emit({ type: 'terrain.full-dirty', source: this.id, payload: { mapId: map.id } });
+  }
   command(bus: StateAccess, command: GameCommand): boolean {
     const run = getRun(bus.read());
     if (command.type === 'click') { const capacity = this.config.input.clickBufferCapacity * (isCycleActive(bus.read(), 'cycle.15') ? 1.1 : 1); bus.update(() => { run.clicks = Math.min(capacity, run.clicks + this.config.input.clickGainPerPress); }); return true; }
@@ -201,6 +303,7 @@ class NativeGameplay implements GameModule {
     }
     if (command.type === 'earth-buff') { bus.update(() => { run.earthBuff = !run.earthBuff; }); return true; }
     if (command.type === 'elementalization' && run.challengeDone['1']) { run.elementalization = !run.elementalization; return true; }
+    if (command.type === 'crystal-flow' && run.challengeDone['3'] && run.unlocked.water) { run.crystalFlow = !run.crystalFlow; return true; }
     if (command.type === 'earth-overload' && run.furthest >= 20 && !run.overloadUsed && (bus.read().upgradeLevels['alchemy.earth-overload'] ?? 0) > 0 && bus.read().upgradeEnabled['alchemy.earth-overload'] !== false && bus.read().resources.earth.amount > 0 && bus.exchange({ earth: bus.read().resources.earth.amount }, {})) {
       run.overloadRemaining = this.config.alchemy.buffs.overloadSeconds; run.overloadUsed = true; run.overloadCount = 0; return true;
     }
@@ -219,10 +322,31 @@ class NativeGameplay implements GameModule {
     const map = Object.values(bus.read().maps)[0];
     if (!map) return;
     bus.update(s => {
+      if (!run.voidDialogueId) {
+        const newlyRevealed = ['infinity.radius', 'infinity.stone-shatter'].find(id =>
+          !run.voidUnlockSeen[id] && voidUnlockRequirementsMet(s, run, id));
+        if (newlyRevealed) {
+          run.voidUnlockSeen[newlyRevealed] = true;
+          run.voidDialogueId = newlyRevealed;
+          run.postChallenge4DialogueStage = 1;
+          run.postChallenge4DialogueRemaining = this.config.presentation.postChallenge4.secondsPerLine;
+        }
+      }
+      if (run.postChallenge4DialogueStage > 0) {
+        run.postChallenge4DialogueRemaining = Math.max(0, run.postChallenge4DialogueRemaining - seconds);
+        if (run.postChallenge4DialogueRemaining === 0) {
+          const lines = (run.voidDialogueId && run.voidDialogueId !== 'postChallenge4'
+            ? this.config.presentation.voidUnlocks[run.voidDialogueId]?.lines
+            : this.config.presentation.postChallenge4.lines)?.length ?? 0;
+          if (run.postChallenge4DialogueStage < lines) { run.postChallenge4DialogueStage++; run.postChallenge4DialogueRemaining = this.config.presentation.postChallenge4.secondsPerLine; }
+          else { run.postChallenge4DialogueStage = 0; run.postChallenge4Pending = false; run.voidDialogueId = null; }
+        }
+      }
       run.clicks = Math.max(0, run.clicks - (this.config.input.clickFlatDecayPerSecond + run.clicks * this.config.input.clickFractionDecayPerSecond) * seconds);
       const capacity = this.config.input.clickBufferCapacity * (isCycleActive(s, 'cycle.15') ? 1.1 : 1);
       const fraction = run.clicks / capacity;
       run.stimpackRemaining = Math.max(0, run.stimpackRemaining - seconds);
+      run.boundaryReturnRemaining = Math.max(0, run.boundaryReturnRemaining - seconds);
       const movement = bus.query('upgrades', { type: 'stat', payload: { base: this.config.characters.baseMovementSpeed, keys: ['character.moveSpeed'] } });
       for (const actor of Object.values(s.characters)) {
         actor.attackSpeed = this.config.characters.baseAttackSpeed * (1 + fraction * this.config.input.miningSpeedBonus) * (isCycleActive(s, 'cycle.12') ? 1.1 : 1) * (run.challenge === 4 && run.stimpackRemaining > 0 ? 1.5 : 1);
@@ -231,9 +355,34 @@ class NativeGameplay implements GameModule {
       if (run.elementalization && s.resources.air.amount > 0) s.resources.air.amount = Math.max(0, s.resources.air.amount - this.config.alchemy.buffs.airPerSecond * seconds);
       if (run.overloadRemaining > 0) run.overloadRemaining = Math.max(0, run.overloadRemaining - seconds);
     });
+    // Автогенерация кристаллов: непрерывный обмен Воды на кристаллы; при нехватке Воды просто приостанавливается.
+    if (run.crystalFlow && run.unlocked.water && run.challengeDone['3']) {
+      const cost = this.config.alchemy.buffs.crystalFlowWaterPerSecond * seconds;
+      const gain = this.config.alchemy.buffs.crystalFlowCrystalsPerSecond * seconds;
+      bus.exchange({ water: cost }, { crystals: gain });
+    }
     if (run.endChargeRemaining > 0 && !run.challenge) {
+      if (run.boundary !== null) {
+        run.boundary = Math.max(0, run.boundary - seconds);
+        if (run.boundary <= 0) {
+          run.boundaryChargeTargetLayer = null;
+          run.endChargeDuration = 0;
+          run.endChargeRemaining = 0;
+          this.resetRun(bus, false, 'boundary-return');
+          run.boundaryReturnRemaining = 1;
+          run.message = 'Граница настигла первопроходца. Забег сброшен к началу.';
+          return;
+        }
+      }
       run.endChargeRemaining = Math.max(0, run.endChargeRemaining - seconds);
-      if (run.endChargeRemaining <= 1e-9) { run.endChargeRemaining = 0; this.resetRun(bus, true); }
+      if (run.endChargeRemaining <= 1e-9) {
+        run.endChargeRemaining = 0;
+        const targetLayer = run.boundaryChargeTargetLayer;
+        run.boundaryChargeTargetLayer = null;
+        run.endChargeDuration = 0;
+        if (targetLayer === null) this.resetRun(bus, true);
+        else this.finishBoundaryCharge(bus, targetLayer);
+      }
       return;
     }
     if (run.challenge && run.challengeTime > 0) {
@@ -251,11 +400,16 @@ class NativeGameplay implements GameModule {
         return;
       }
     }
-    if (this.compress(bus)) return;
-    if (!run.challenge && run.boundary !== null && run.boss <= 0) {
+    if (!run.challenge && run.boundary !== null) {
       run.boundary -= seconds;
-      if (run.boundary <= 0) { this.resetRun(bus, false); run.message = 'Граница настигла первопроходца.'; return; }
+      if (run.boundary <= 0) {
+        this.resetRun(bus, false, 'boundary-return');
+        run.boundaryReturnRemaining = 1;
+        run.message = 'Граница настигла первопроходца. Забег сброшен к началу.';
+        return;
+      }
     }
+    if (this.compress(bus)) return;
     if (run.challenge === 3 || (run.challenge === 4 && run.layer < this.config.world.layers - 1)) {
       run.regenClock += seconds;
       if (run.regenClock >= 1) {
@@ -265,7 +419,18 @@ class NativeGameplay implements GameModule {
       }
     }
     if (run.challenge === 3 && run.challengeGoal >= 10000) { this.leaveChallenge(bus, true); return; }
-    if (Object.keys(bus.read().tiles).length > 0) return;
+    const state = bus.read();
+    const currentMap = Object.values(state.maps)[0];
+    if (!currentMap) return;
+    const boundaryFoldingLevel = !run.challenge ? Math.min(4, Math.max(0, Math.floor(bus.read().upgradeLevels['infinity.space-folding'] ?? 0))) : 0;
+    const canFoldPastBoundary = run.layer >= this.config.world.outsideBoundaryLayer && boundaryFoldingLevel > 0
+      && bus.read().upgradeEnabled['infinity.space-folding'] !== false;
+    let remainingCount = 0;
+    for (let y = 0; y < currentMap.height; y++) for (let x = 0; x < currentMap.width; x++) {
+      const tile = state.tiles[`${currentMap.id}:${x}:${y}`];
+      if (tile?.mapId === currentMap.id && !(canFoldPastBoundary && tile.tags.includes('boundary-gate'))) remainingCount++;
+    }
+    if (remainingCount > 0) return;
     const actor = bus.read().characters.main;
     if (!actor) return;
     if (actor.position.y > -0.5) {
@@ -274,42 +439,119 @@ class NativeGameplay implements GameModule {
     }
     if (run.challenge === 3) return;
     if (run.challenge && run.challenge !== 4) { this.leaveChallenge(bus, true); return; }
-    if (!run.challenge && run.layer === finalPlayableLayer(bus.read(), this.config)) {
-      if (this.config.world.finalChargeSeconds <= 0) { this.resetRun(bus, true); return; }
-      run.endChargeRemaining = this.config.world.finalChargeSeconds;
-      run.message = 'Финальная граница. Зарядка пробивного удара.';
-      bus.emit({ type: 'run.visual-transition', source: this.id, payload: { kind: 'charge' } });
+    const activeMap = bus.read().maps[actor.mapId];
+    const foldingLevel = !run.challenge ? Math.min(4, Math.max(0, Math.floor(bus.read().upgradeLevels['infinity.space-folding'] ?? 0))) : 0;
+    if (!run.challenge && activeMap?.tags.includes('boundary-exit')) {
+      const targetLayer = Math.min(nextFoldedLayer(run.layer, foldingLevel, this.config), finalPlayableLayer(bus.read(), this.config));
+      const duration = this.chargeDuration(bus);
+      run.endChargeDuration = duration;
+      run.boundaryChargeTargetLayer = targetLayer;
+      run.endChargeRemaining = duration;
+      run.message = 'Граница слоя. Зарядка пробивного удара.';
+      bus.emit({ type: 'run.visual-transition', source: this.id, payload: { kind: 'charge', durationSeconds: duration, boundaryCount: Math.max(1, targetLayer - run.layer) } });
       return;
     }
-    const folding = run.challenge ? 0 : Math.min(4, bus.read().upgradeLevels['infinity.space-folding'] ?? 0);
-    run.layer += folding ? folding + 1 : 1;
+    if (!run.challenge && run.layer >= finalPlayableLayer(bus.read(), this.config)) {
+      if (this.config.world.finalChargeSeconds <= 0) { this.resetRun(bus, true); return; }
+      const duration = this.chargeDuration(bus);
+      run.endChargeDuration = duration;
+      run.boundaryChargeTargetLayer = null;
+      run.endChargeRemaining = duration;
+      run.message = 'Финальная граница. Зарядка пробивного удара.';
+      bus.emit({ type: 'run.visual-transition', source: this.id, payload: { kind: 'charge', durationSeconds: duration } });
+      return;
+    }
+    const previousLayer = run.layer;
+    const folding = run.challenge ? 0 : Math.min(4, Math.max(0, Math.floor(bus.read().upgradeLevels['infinity.space-folding'] ?? 0)));
+    const nextLayer = run.challenge ? run.layer + 1 : nextFoldedLayer(run.layer, folding, this.config);
+    run.layer = run.challenge ? nextLayer : Math.min(nextLayer, finalPlayableLayer(bus.read(), this.config));
     if (!run.challenge) {
       run.furthest = Math.max(run.furthest, run.layer);
-      if (run.layer % 5 === 0) bus.exchange({}, { crystals: 1 });
+      const boundaryMilestones = Math.max(0, Math.floor(run.layer / 5) - Math.floor(previousLayer / 5));
+      if (boundaryMilestones) bus.exchange({}, { crystals: boundaryMilestones });
+      this.awardOutsideBoundaryPoints(bus, previousLayer, run.layer);
+      this.startOutsideBoundaryTimer(previousLayer, run, bus.read().upgradeLevels['infinity.breakthrough'] ?? 0);
     }
-    if (run.layer >= this.config.world.layers) {
+    if (run.layer >= playableLayerCount(bus.read(), this.config)) {
       if (run.challenge === 4) this.leaveChallenge(bus, true); else this.resetRun(bus, true);
       return;
     }
     if (!run.challenge && run.layer === 3) run.boundary = this.config.world.layers * 12;
     this.makeMap(bus);
   }
+  private startOutsideBoundaryTimer(previousLayer: number, run: NativeRun, breakthroughLevel: number): void {
+    if (breakthroughLevel >= 2
+      && previousLayer < this.config.world.outsideBoundaryLayer && run.layer >= this.config.world.outsideBoundaryLayer) {
+      run.boundary = this.config.world.outsideBoundarySeconds;
+      run.message = 'Вы вышли за пределы стабильной территории.';
+    }
+  }
+  private awardOutsideBoundaryPoints(bus: StateAccess, previousLayer: number, nextLayer: number): void {
+    const firstBoundaryLayer = this.config.world.outsideBoundaryLayer - 1;
+    if (nextLayer <= firstBoundaryLayer || previousLayer >= nextLayer) return;
+    const fullAward = previousLayer <= firstBoundaryLayer && nextLayer > firstBoundaryLayer ? 1 : 0;
+    const laterSquares = Math.max(0, nextLayer - Math.max(previousLayer, this.config.world.outsideBoundaryLayer));
+    if (!fullAward && !laterSquares) return;
+    const base = this.config.progression.breakthroughPerCompletion;
+    const multiplier = bus.query('upgrades', { type: 'stat', payload: { base: 1, keys: ['progression.breakthrough'] } });
+    const standardAward = Math.max(1, Math.floor(base * (typeof multiplier === 'number' ? multiplier : 1)));
+    bus.exchange({}, { breakthrough: standardAward * (fullAward + laterSquares / 2) });
+  }
+  private chargeDuration(bus: StateAccess): number {
+    const breakthroughLevel = bus.read().upgradeLevels['infinity.breakthrough'] ?? 0;
+    const acceleration = breakthroughLevel >= 2 ? 2 : 1;
+    return Math.max(0.01, this.config.world.finalChargeSeconds / acceleration);
+  }
+  private finishBoundaryCharge(bus: StateAccess, targetLayer: number): void {
+    const run = getRun(bus.read()), previousLayer = run.layer;
+    run.layer = targetLayer;
+    run.furthest = Math.max(run.furthest, targetLayer);
+    const milestones = Math.max(0, Math.floor(targetLayer / this.config.world.bossEveryLayers)
+      - Math.floor(previousLayer / this.config.world.bossEveryLayers));
+    if (milestones) bus.exchange({}, { crystals: milestones });
+    this.awardOutsideBoundaryPoints(bus, previousLayer, targetLayer);
+    this.startOutsideBoundaryTimer(previousLayer, run, bus.read().upgradeLevels['infinity.breakthrough'] ?? 0);
+    this.makeMap(bus, 'complete');
+    run.message = 'Граница пробита. Переход открыт.';
+  }
   private compress(bus: StateAccess): boolean {
     const state = bus.read(), run = getRun(state), map = Object.values(state.maps)[0], settings = this.config.world;
-    if (!settings.compressorEnabled || !map || (run.challenge !== 0 && run.challenge !== 4) || run.boss > 0 || (!run.challenge && bossLayer(run.layer, this.config)) || run.layer >= (run.challenge === 4 ? settings.layers - 1 : finalPlayableLayer(state, this.config))) return false;
+    // «Снятие печати босса» разрешает сжимателю перенос и через боссовые слои, включая активный таймер босса.
+    const bossSealLifted = isCycleActive(state, 'cycle.8');
+    const lastLayer = run.challenge === 4 ? settings.layers - 1 : finalPlayableLayer(state, this.config);
+    if (!settings.compressorEnabled || !map || (run.challenge !== 0 && run.challenge !== 4) || (run.boss > 0 && !bossSealLifted) || (!run.challenge && !bossSealLifted && bossLayer(run.layer, this.config)) || run.layer >= lastLayer
+      || (!run.challenge && run.layer >= settings.outsideBoundaryLayer - 1)) return false;
+    let remainingCount = 0;
+    for (let y = 0; y < map.height; y++) for (let x = 0; x < map.width; x++) {
+      const tile = state.tiles[`${map.id}:${x}:${y}`];
+      if (tile?.tags.includes('boundary-gate')) return false;
+      if (tile?.mapId === map.id) remainingCount++;
+    }
     const active = bus.query('upgrades', { type: 'stat', payload: { base: 0, keys: ['world.compressor'] } });
-    if (typeof active !== 'number' || active <= 0 || Object.keys(state.tiles).length / (map.width * map.height) > settings.compressorRemainingFraction) return false;
-    run.layer++;
+    if (typeof active !== 'number' || active <= 0 || remainingCount / (map.width * map.height) > settings.compressorRemainingFraction) return false;
+    const previousLayer = run.layer;
+    const folding = run.challenge ? 0 : Math.min(4, Math.max(0, Math.floor(state.upgradeLevels['infinity.space-folding'] ?? 0)));
+    run.layer = Math.min(run.challenge ? run.layer + 1 : nextFoldedLayer(run.layer, folding, this.config), lastLayer);
     if (!run.challenge) {
       run.furthest = Math.max(run.furthest, run.layer);
-      if (run.layer % settings.bossEveryLayers === 0) bus.exchange({}, { crystals: 1 });
+      const boundaryMilestones = Math.max(0, Math.floor(run.layer / settings.bossEveryLayers) - Math.floor(previousLayer / settings.bossEveryLayers));
+      if (boundaryMilestones) bus.exchange({}, { crystals: boundaryMilestones });
+      this.startOutsideBoundaryTimer(previousLayer, run, state.upgradeLevels['infinity.breakthrough'] ?? 0);
     }
     this.makeMap(bus);
     run.message = 'Пространственный сжиматель перенёс вас на следующий слой.';
     bus.emit({ type: 'run.visual-transition', source: this.id, payload: { kind: 'compress' } });
     return true;
   }
-  makeMap(bus: StateAccess): void {
+  /** Множитель прочности камней испытания: у испытания 4 он растёт от ×3 до ×4 по мере продвижения. */
+  challengeHealthMultiplier(challenge: number, layer: number): number {
+    const rules = this.config.challenges[challenge === 1 ? 'one' : challenge === 2 ? 'two' : challenge === 3 ? 'three' : 'four'];
+    const min = rules.stoneHealthMultiplier, max = rules.stoneHealthMaxMultiplier ?? min;
+    if (challenge !== 4 || max === min) return min;
+    const progress = Math.min(1, Math.max(0, layer / (this.config.world.layers - 1)));
+    return min + (max - min) * progress;
+  }
+  makeMap(bus: StateAccess, visualKind: 'layer' | 'complete' = 'layer'): void {
     const run = getRun(bus.read());
     const c = this.config.world;
     const challenge = run.challenge;
@@ -320,8 +562,15 @@ class NativeGameplay implements GameModule {
     const id = `layer:${run.layer}`;
     const tiles: Record<string, TileState> = {};
     const boss = !challenge && bossLayer(run.layer, this.config);
+    // Инварианты цикла вынесены из пер-тайлового цикла: чтение состояния на каждый камень не нужно.
+    const stoneShatter = (bus.read().upgradeLevels['infinity.stone-shatter'] ?? 0) > 0 && bus.read().upgradeEnabled['infinity.stone-shatter'] !== false;
+    const shatterFactor = stoneShatter ? c.stoneShatterFactor : 1;
+    const foldingLevel = challenge ? 0 : Math.min(4, Math.max(0, Math.floor(bus.read().upgradeLevels['infinity.space-folding'] ?? 0)));
+    const foldingFactor = this.config.world.foldingHealthMultiplier ** foldingLevel;
+    const bossSealLifted = isCycleActive(bus.read(), 'cycle.8');
     for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
-      const growthSteps = Math.floor(run.layer / c.hpGrowthEveryLayers);
+      // Испытание 3: камни прочны, как на последнем слое, — полный рост здоровья без дополнительных модификаторов.
+      const growthSteps = challenge === 3 ? Math.floor((c.layers - 1) / c.hpGrowthEveryLayers) : Math.floor(run.layer / c.hpGrowthEveryLayers);
       const afterBoss = run.layer >= c.bossEveryLayers && run.layer < c.layers - 1 && run.layer % c.bossEveryLayers < c.postBossCompensationLayers;
       const worldY = run.layer * height + height - 1 - y;
       const nx = (x + c.mineralNoiseOffsetX) / c.mineralNoiseScale, ny = (worldY + c.mineralNoiseOffsetY) / c.mineralNoiseScale;
@@ -335,22 +584,34 @@ class NativeGameplay implements GameModule {
       const actualBase = actualKind === 'hard' ? c.hardHealth : actualKind === 'elemental' ? c.elementalHealth : c.stoneHealth;
       let hp = scaledValue(actualBase, c.hpGrowthLinear, c.hpGrowthFraction, growthSteps);
       if (afterBoss) hp *= c.postBossHealthMultiplier;
-      if (boss && !isCycleActive(bus.read(), 'cycle.8')) hp *= c.bossHealthMultiplier;
-      const challengeHealth = challenge ? rules.stoneHealthMultiplier : 1;
-      const foldingLevel = !challenge ? Math.min(4, bus.read().upgradeLevels['infinity.space-folding'] ?? 0) : 0;
-      hp *= challenge ? challengeHealth : 2 ** foldingLevel;
+      if (boss && !bossSealLifted) hp *= c.bossHealthMultiplier;
+      hp *= challenge ? this.challengeHealthMultiplier(challenge, run.layer) : foldingFactor;
+      hp *= shatterFactor;
       const tileId = `${id}:${x}:${y}`;
       tiles[tileId] = { id: tileId, mapId: id, position: { x, y }, kind: actualKind, health: hp, maxHealth: hp, armor: actualKind === 'hard' ? 1 - c.hardSplashMultiplier : 0, tags: [] };
     }
+    const extended = !challenge && (bus.read().upgradeLevels['infinity.breakthrough'] ?? 0) >= 2;
+    const hasBoundaryExit = extended && run.layer >= c.outsideBoundaryLayer - 1 && run.layer < finalPlayableLayer(bus.read(), this.config);
+    if (hasBoundaryExit) {
+      const gateId = `${id}:${Math.floor(width / 2)}:0`, gate = tiles[gateId];
+      if (gate) { gate.kind = 'boundary'; gate.armor = 0; gate.health *= c.boundaryGateHealthMultiplier; gate.maxHealth = gate.health; gate.tags.push('boundary-gate'); }
+    }
     bus.update(s => {
-      s.maps = { [id]: { id, layer: run.layer, width, height, tags: boss ? ['boss', 'coordinate-indexed'] : ['coordinate-indexed'] } };
+      const tags = [
+        'coordinate-indexed',
+        ...(boss ? ['boss'] : []),
+        ...(hasBoundaryExit ? ['boundary-exit'] : []),
+        ...(!challenge && run.layer >= c.outsideBoundaryLayer && (bus.read().upgradeLevels['infinity.breakthrough'] ?? 0) >= 2 ? ['unstable-boundary'] : []),
+      ];
+      s.maps = { [id]: { id, layer: run.layer, width, height, tags } };
       s.tiles = tiles;
+      s.tileRevision++;
       for (const actor of Object.values(s.characters)) { actor.mapId = id; actor.position = { x: Math.floor(width / 2), y: height }; }
       s.moduleData.delivery = { flights: [], flashes: [] };
     });
     run.boss = boss ? c.bossTimeSeconds : 0;
     run.message = boss ? `Босс ${run.layer + 1}: успейте за ${c.bossTimeSeconds} секунд.` : `Квадрат ${run.layer + 1}`;
-    bus.emit({ type: 'run.visual-transition', source: this.id, payload: { kind: 'layer' } });
+    bus.emit({ type: 'run.visual-transition', source: this.id, payload: { kind: visualKind } });
   }
   regenerate(bus: StateAccess, fraction: number): void {
     const state = bus.read(), map = Object.values(state.maps)[0];
@@ -358,22 +619,28 @@ class NativeGameplay implements GameModule {
     const missing: { x: number; y: number }[] = [];
     for (let y = 0; y < map.height; y++) for (let x = 0; x < map.width; x++) if (!state.tiles[`${map.id}:${x}:${y}`]) missing.push({ x, y });
     const count = Math.min(missing.length, Math.ceil(map.width * map.height * fraction));
+    const challenge3Health = scaledValue(this.config.world.stoneHealth, this.config.world.hpGrowthLinear, this.config.world.hpGrowthFraction,
+      Math.floor((this.config.world.layers - 1) / this.config.world.hpGrowthEveryLayers));
+    const added: { mapId: string; tileId: string; position: { x: number; y: number } }[] = [];
     bus.update(s => {
       for (let i = 0; i < count; i++) {
         const index = i + Math.floor(Math.random() * (missing.length - i));
         [missing[i], missing[index]] = [missing[index], missing[i]];
         const point = missing[i], id = `${map.id}:${point.x}:${point.y}`;
         const run = getRun(s);
-        const challengeRules = run.challenge === 3 ? this.config.challenges.three : this.config.challenges.four;
-        const healthScale = run.challenge ? challengeRules.stoneHealthMultiplier : 1;
-        const health = this.config.world.stoneHealth * healthScale;
+        const health = run.challenge === 3 ? challenge3Health
+          : this.config.world.stoneHealth * this.challengeHealthMultiplier(run.challenge, run.layer);
         s.tiles[id] = { id, mapId: map.id, position: point, kind: 'stone', health, maxHealth: health, armor: 0, tags: [] };
+        added.push({ mapId: map.id, tileId: id, position: { ...point } });
       }
+      if (count > 0) s.tileRevision++;
       if (getRun(s).challenge === 4) for (const tile of Object.values(s.tiles)) tile.health = Math.min(tile.maxHealth, tile.health + tile.maxHealth * 0.05);
     });
-    bus.emit({ type: 'terrain.full-dirty', source: this.id, payload: { mapId: map.id } });
+    // Возрождённые камни помечаются точечно: полная перерисовка карты каждый тик регенерации не нужна.
+    for (const tile of added) bus.emit({ type: 'tile.added', source: this.id, payload: tile });
+    if (getRun(bus.read()).challenge === 4) bus.emit({ type: 'terrain.full-dirty', source: this.id, payload: { mapId: map.id } });
   }
-  resetRun(bus: StateAccess, completed: boolean): void {
+  resetRun(bus: StateAccess, completed: boolean, transitionKind?: 'reset' | 'boundary-return'): void {
     const run = getRun(bus.read());
     const snapshot = completed ? undefined : this.resetVisualSnapshot(bus);
     bus.update(s => {
@@ -381,16 +648,19 @@ class NativeGameplay implements GameModule {
         const basePoints = this.config.progression.breakthroughPerCompletion;
         const multiplier = bus.query('upgrades', { type: 'stat', payload: { base: 1, keys: ['progression.breakthrough'] } });
         s.resources.breakthrough.amount += Math.max(1, Math.floor(basePoints * (typeof multiplier === 'number' ? multiplier : 1)));
-        run.completions++; run.furthest = Math.max(run.furthest, this.config.world.layers);
+        run.completions++; run.furthest = Math.max(run.furthest, playableLayerCount(s, this.config));
       }
-      for (const id of ['ore', 'stone', 'elementalStone', 'earth', 'water', 'air', 'fire']) s.resources[id].amount = 0;
+      if (!allChallengesDone(run)) {
+        for (const id of ['ore', 'stone', 'elementalStone', 'earth', 'water', 'air', 'fire']) s.resources[id].amount = 0;
+      }
       run.layer = completed && isCycleActive(s, 'cycle.4') ? this.config.world.bossEveryLayers : 0;
-      run.boundary = run.layer >= 3 ? this.config.world.layers * 12 : null; run.clicks = 0; run.boss = 0; run.overloadRemaining = 0; run.overloadUsed = false; run.overloadCount = 0; run.endChargeRemaining = 0;
-      if (completed && isCycleActive(s, 'cycle.7')) s.resources.water.amount = Math.min(s.resources.water.capacity ?? Infinity, 100);
+      run.boundary = run.layer >= 3 ? this.config.world.layers * 12 : null; run.clicks = 0; run.boss = 0; run.overloadRemaining = 0; run.overloadUsed = false; run.overloadCount = 0;
+      run.endChargeRemaining = 0; run.endChargeDuration = 0; run.boundaryChargeTargetLayer = null; run.boundaryReturnRemaining = 0;
+      if (completed && isCycleActive(s, 'cycle.7') && (s.upgradeLevels['alchemy.earth-overload'] ?? 0) > 0) run.overloadRemaining = this.config.alchemy.buffs.overloadSeconds;
     });
     this.makeMap(bus);
     run.message = completed ? 'Прорыв завершён: получено очко прорыва.' : 'Забег начат заново.';
-    bus.emit({ type: 'run.visual-transition', source: this.id, payload: { kind: completed ? 'complete' : 'reset', snapshot } });
+    bus.emit({ type: 'run.visual-transition', source: this.id, payload: { kind: completed ? 'complete' : transitionKind ?? 'reset', snapshot } });
   }
   enterChallenge(bus: StateAccess, number: number): boolean {
     const state = bus.read(), run = getRun(state), unlock = [0, 35, 40, 45, 50][number];
@@ -409,9 +679,18 @@ class NativeGameplay implements GameModule {
   leaveChallenge(bus: StateAccess, won: boolean): void {
     const run = getRun(bus.read()), backup = run.backup, number = run.challenge;
     if (!number || !backup) return;
-    if (won) run.challengeDone[String(number)] = true;
+    if (won) {
+      run.challengeDone[String(number)] = true;
+      if (number === 4) run.postChallenge4Pending = true;
+      if (run.postChallenge4Pending && allChallengesDone(run)) {
+        run.postChallenge4Pending = false;
+        run.postChallenge4DialogueStage = 1;
+        run.postChallenge4DialogueRemaining = this.config.presentation.postChallenge4.secondsPerLine;
+        run.voidDialogueId = 'postChallenge4';
+      }
+    }
     bus.update(s => {
-      s.maps = backup.maps; s.tiles = backup.tiles; s.characters = backup.characters; s.resources = backup.resources;
+      s.maps = backup.maps; s.tiles = backup.tiles; s.tileRevision++; s.characters = backup.characters; s.resources = backup.resources;
       if (won && number === 3) s.resources.fire.amount = Math.max(1, s.resources.fire.amount);
       s.moduleData.delivery = { flights: [], flashes: [] };
       if (won && number === 2) for (const actor of Object.values(s.characters)) for (const weapon of weaponIds) {
@@ -457,6 +736,28 @@ class IsolationArtifact implements GameModule {
   }
 }
 
+/** Синхронизирует доступность алхимических рецептов с прогрессом забега; сами рецепты остаются чистыми. */
+class AlchemyUnlockGates implements GameModule {
+  readonly id = 'alchemy-gates';
+  readonly priority = 9;
+  onRegister(bus: StateAccess): void { this.sync(bus); }
+  tick(bus: StateAccess): void { this.sync(bus); }
+  command(bus: StateAccess, command: GameCommand): boolean { if (command.type !== 'refresh') return false; this.sync(bus); return true; }
+  private sync(bus: StateAccess): void {
+    const state = bus.read(), run = getRun(state);
+    if (!run) return;
+    this.gate(bus, 'alchemy.earth', run.furthest >= 20);
+    this.gate(bus, 'alchemy.water', !!run.unlocked.water);
+    this.gate(bus, 'alchemy.air', !!run.challengeDone['1']);
+    this.gate(bus, 'alchemy.fire', !!run.challengeDone['3']);
+    this.gate(bus, 'alchemy.vulcanization', !!run.challengeDone['3'] && (state.upgradeLevels['alchemy.vulcanization-unlock'] ?? 0) > 0 && run.challenge !== 4);
+    this.gate(bus, 'alchemy.decomposition', !!run.challengeDone['3'] && (state.upgradeLevels['alchemy.decomposition-unlock'] ?? 0) > 0);
+  }
+  private gate(bus: StateAccess, id: string, open: boolean): void {
+    if (bus.isEnabled(id) !== open) bus.setEnabled(id, open);
+  }
+}
+
 class ResourceCapacities implements GameModule {
   readonly id = 'capacity';
   readonly priority = 5;
@@ -470,9 +771,8 @@ class ResourceCapacities implements GameModule {
       if (base === null) continue;
       const value = bus.query('upgrades', { type: 'stat', payload: { base, keys: [`alchemy.${id}.capacity`] } });
       if (typeof value === 'number') bus.update(s => {
-        const capacity = Math.max(0, value);
-        s.resources[id].capacity = capacity;
-        s.resources[id].amount = Math.min(s.resources[id].amount, capacity);
+        // Накопленный избыток не списывается: временно сниженный лимит лишь блокирует новый прирост.
+        s.resources[id].capacity = Math.max(0, value);
       });
     }
   }
@@ -494,6 +794,7 @@ export class FrameworkGame {
     this.shop = upgrades(this.config);
     this.bus.replace(new UpgradeModule(this.shop));
     this.bus.register(new ResourceCapacities(this.config));
+    this.bus.register(new AlchemyUnlockGates());
     this.gameplay = new NativeGameplay(this.config);
     this.bus.register(this.gameplay);
     this.bus.register(new DeliveryModule({ damage: (tile, base, hit, bus) => {
@@ -501,6 +802,9 @@ export class FrameworkGame {
       if (run.challenge === 2 && hit.splash && !hit.combo) return 0;
       let amount = base * (tile.kind === 'hard' && hit.splash ? 1 - Math.max(0, tile.armor - hit.penetration) : 1);
       if (run.challenge === 4 && run.stimpackRemaining > 0) amount *= 1.5;
+      if (!run.challenge && run.layer >= this.config.world.outsideBoundaryLayer - 1
+        && (bus.read().upgradeLevels['infinity.space-folding'] ?? 0) >= 3
+        && bus.read().upgradeEnabled['infinity.space-folding'] !== false && tile.tags.includes('boundary-gate')) amount *= 2;
       if (tile.kind === 'hard' && isCycleActive(bus.read(), 'cycle.10')) amount *= 1.1;
       if (tile.kind === 'elemental' && isCycleActive(bus.read(), 'cycle.14')) amount *= 1.1;
       const currentTile = bus.read().tiles[tile.id];
@@ -527,6 +831,7 @@ export class FrameworkGame {
     this.bus.subscribe(event => {
       if (event.type !== 'tile.destroyed') return;
       const tile = (event.payload as { tile: TileState }).tile, run = getRun(this.bus.read());
+      if (tile.tags.includes('boundary-gate')) return;
       const weight = tile.kind === 'hard' ? 3 : tile.kind === 'elemental' ? 2 : 1;
       const converted = tile.kind !== 'elemental' && run.elementalization && this.bus.read().resources.air.amount > 0 && Math.random() < this.config.alchemy.buffs.elementalizationChance;
       const world = this.config.world, layer = Math.max(0, run.layer);
@@ -574,19 +879,48 @@ export class FrameworkGame {
     if (id === 'fists.splash' && (this.bus.read().upgradeLevels['fists.radius'] ?? 0) < 1) return false;
     if (id === 'bombarda.elemental' && !run.challengeDone['1']) return false;
     if (alchemyItems.some(item => item.id === id) && (run.furthest < 20 || (id === 'alchemy.water1' && !run.unlocked.water) || (id.startsWith('alchemy.air') && !run.challengeDone['3']) || (id === 'alchemy.fire1' && !run.challengeDone['3']))) return false;
-    if (id === 'alchemy.fire-speed' && !this.bus.read().upgradeLevels['spectrum.approach']) return false;
     if (id === 'alchemy.earth-overload' && (run.furthest < 20 || !run.unlocked.water)) return false;
     if ((id === 'alchemy.vulcanization-unlock' || id === 'alchemy.decomposition-unlock') && !run.challengeDone['3']) return false;
     if ((id === 'cycle.expansion' || id.startsWith('cycle.')) && !run.completions) return false;
     if (id === 'spatial.compressor' && (!this.config.world.compressorEnabled || run.furthest < this.config.world.compressorUnlockLayer || (run.challenge && run.challenge !== 4))) return false;
-    if (id === 'spectrum.approach' && !run.challengeDone['4']) return false;
-    if (id.startsWith('infinity.') && (!run.challengeDone['4'] || !this.bus.read().upgradeLevels['spectrum.approach'])) return false;
+    if (id === 'spectrum.approach' && !voidUnlockRequirementsMet(this.bus.read(), run, id)) return false;
+    if ((id === 'infinity.space-folding' || id === 'infinity.breakthrough') && run.challenge) return false;
+    if (id.startsWith('infinity.') && !allChallengesDone(run)) return false;
+    if (['infinity.radius', 'infinity.stone-shatter', 'infinity.breakthrough', 'infinity.space-folding'].includes(id) && !voidUnlockRequirementsMet(this.bus.read(), run, id)) return false;
+    // Изломы появляются в фазе «???» — сразу после победы в испытании 4.
+    if (id.startsWith('fracture.') && !allChallengesDone(run)) return false;
+    const foldingFirst = id === 'infinity.space-folding' && (this.bus.read().upgradeLevels[id] ?? 0) === 0;
+    if (foldingFirst && !run.fistsSacrificed && !(this.bus.read().upgradeLevels['fists.combo'] ?? 0)) return false;
     const bought = this.bus.invoke('upgrades', { type: 'buy', payload: id });
+    // Первая ступень Складывания забирает накопленный набор улучшений кулаков.
+    if (bought && foldingFirst && !run.fistsSacrificed) this.bus.update(s => {
+      for (const key of Object.keys(s.upgradeLevels)) if (key.startsWith('fists.')) delete s.upgradeLevels[key];
+      const fists = s.characters.main?.weaponStates.fists;
+      if (fists) fists.comboEnabled = false;
+      (s.moduleData.run as NativeRun).fistsSacrificed = true;
+    });
+    if (bought && foldingFirst) this.config.weapons.fists.area.shape = 'single';
+    if (bought && id === 'infinity.space-folding' && !run.challenge) {
+      this.bus.update(s => {
+        const mapId = Object.values(s.maps)[0]?.id;
+        if (!mapId) return;
+        for (const tile of Object.values(s.tiles)) if (tile.mapId === mapId) {
+          tile.health *= this.config.world.foldingHealthMultiplier;
+          tile.maxHealth *= this.config.world.foldingHealthMultiplier;
+        }
+      });
+      const mapId = Object.values(this.bus.read().maps)[0]?.id;
+      if (mapId) this.bus.emit({ type: 'terrain.full-dirty', source: 'infinity.space-folding', payload: { mapId } });
+    }
     if (bought) this.bus.invoke('capacity', { type: 'refresh', payload: null });
     if (bought && id === 'spatial.compressor') this.bus.invoke('gameplay', { type: 'compress', payload: null });
     if (bought && id === 'fists.combo') this.bus.update(s => { const fists = s.characters.main?.weaponStates.fists; if (fists) fists.comboEnabled = true; });
     if (bought && id === 'fists.splash') this.config.weapons.fists.area.shape = 'circle';
+    if (bought && id === 'infinity.breakthrough' && (this.bus.read().upgradeLevels[id] ?? 0) >= 2) this.gameplay.ensureBoundaryGate(this.bus);
     return bought;
+  }
+  canRevealVoidUpgrade(id: string): boolean {
+    return voidUnlockRequirementsMet(this.bus.read(), getRun(this.bus.read()), id);
   }
   upgradeCost(id: string): Record<string, number> | undefined {
     const item = this.shop.find(item => item.id === id); if (!item) return undefined;
@@ -633,4 +967,11 @@ export class FrameworkGame {
   }
   enterChallenge(id: number): boolean { return this.bus.invoke('gameplay', { type: 'enter-challenge', payload: id }); }
   leaveChallenge(): void { this.bus.invoke('gameplay', { type: 'leave-challenge', payload: null }); }
+  /** Первый просмотр страницы элемента снимает пустотную подсветку его «Излома». */
+  markFractureSeen(element: string): boolean {
+    const run = getRun(this.bus.read());
+    if (run.fractureSeen[element]) return false;
+    this.bus.update(s => { (s.moduleData.run as NativeRun).fractureSeen[element] = true; });
+    return true;
+  }
 }

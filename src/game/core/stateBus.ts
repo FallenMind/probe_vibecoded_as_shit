@@ -19,6 +19,7 @@ export class StateBus implements StateAccess {
 
   constructor(initial: GameState = createEmptyState()) {
     this.state = structuredClone(initial);
+    this.state.tileRevision ??= 0;
     this.state.upgradeEnabled ??= {};
     this.state.upgradeSuppressions ??= {};
   }

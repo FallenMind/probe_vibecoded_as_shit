@@ -1,6 +1,7 @@
 import './app.css';
 import './framework.css';
-import { FrameworkGame, SAVE_KEY } from './game/runtime/game';
+import './void.css';
+import { FrameworkGame, getRun, SAVE_KEY } from './game/runtime/game';
 import { challengeDescriptions, createScreenRenderer, type AlchemyNodeId } from './game/runtime/screen';
 import { GameVisuals } from './game/animation/gameVisuals';
 import { CanvasGameRenderer } from './game/animation/canvasVisuals';
@@ -13,7 +14,7 @@ app.innerHTML = `
   <nav class="game-tabs" aria-label="Разделы игры"><button id="tab-breach" class="game-tab active" data-action="tab" data-value="breach">Прорыв</button><button id="tab-alchemy" class="game-tab" data-action="tab" data-value="alchemy"><span class="alchemy-tab-icon">✧</span> Алхимия</button></nav>
   <div id="breach-view" class="layout"><main class="main-column"><div class="section-heading"><div><span class="eyebrow">АВТОНОМНАЯ ЭКСПЕДИЦИЯ</span><h1>Прорыв сквозь породу</h1></div><span class="live-badge"><i></i> СИГНАЛ АКТИВЕН</span></div>
     <section class="map-card"><div class="map-top"><div><span class="eyebrow">КВАДРАТ</span><strong id="layer">1 / 50</strong></div><div class="map-top-right"><span class="eyebrow">ОСТАЛОСЬ КАМНЕЙ</span><strong id="remaining">—</strong></div></div>
-      <div class="map-wrap"><canvas id="field" width="620" height="640" aria-label="Карта добычи"></canvas><div id="paused" class="paused-overlay hidden">ПАУЗА <small>P / ESC</small></div></div>
+      <div class="map-wrap"><canvas id="field" width="620" height="640" aria-label="Карта добычи"></canvas><canvas id="field-blur" width="310" height="320" aria-hidden="true"></canvas><div id="paused" class="paused-overlay hidden">ПАУЗА <small>P / ESC</small></div></div>
       <div class="map-bottom"><div><span class="map-key"><i class="stone-key" data-stone-kind="stone"></i> ПОРОДА</span><span class="map-key"><i class="hard-key" data-stone-kind="hard"></i> ТВЁРДАЯ</span><span class="map-key"><i class="element-key" data-stone-kind="elemental"></i> ЭЛЕМЕНТ</span></div><button id="mine" class="mine-button">✦ &nbsp; УСКОРИТЬ</button></div><div class="progress-track"><div id="progress"></div></div></section>
     <div class="below-map"><span id="message"></span></div>
     <section id="quick-alchemy" class="support-card hidden"><div class="support-icon">◈</div><div class="support-copy"><span class="eyebrow">АЛХИМИЯ</span><h2>Быстрое управление</h2><p id="quick-resources"></p><div id="quick-controls" class="quick-controls"></div></div></section>
@@ -30,16 +31,55 @@ app.innerHTML = `
   <div id="challenge-modal" class="challenge-modal hidden"><section class="challenge-dialog" role="dialog" aria-modal="true" aria-labelledby="challenge-title"><button id="challenge-close" class="challenge-close" aria-label="Закрыть">×</button><span class="eyebrow">ИСПЫТАНИЕ</span><h2 id="challenge-title"></h2><p id="challenge-description"></p><button id="challenge-start" class="challenge-action">Начать испытание</button></section></div>
 </div>`;
 
+const postChallenge4Overlay = document.createElement('div');
+postChallenge4Overlay.id = 'post-challenge4-overlay';
+postChallenge4Overlay.className = 'void-overlay hidden';
+postChallenge4Overlay.setAttribute('aria-live', 'polite');
+postChallenge4Overlay.innerHTML = '<div class="void-dialog"></div>';
+app.append(postChallenge4Overlay);
+let postChallenge4Stage = 0, postChallenge4Fade: number | null = null;
+let overlayDialogueId: string | null = null;
+function hidePostChallenge4Overlay(): void {
+  postChallenge4Overlay.classList.add('fading');
+  const fade = game.config.presentation.postChallenge4.fadeSeconds * 1000;
+  if (postChallenge4Fade !== null) window.clearTimeout(postChallenge4Fade);
+  postChallenge4Fade = window.setTimeout(() => {
+    postChallenge4Overlay.classList.add('hidden');
+    postChallenge4Overlay.classList.remove('fading');
+    postChallenge4Fade = null;
+  }, fade);
+}
+
 const el = (id: string) => document.getElementById(id)!;
 const canvas = el('field') as HTMLCanvasElement;
 const visuals = new GameVisuals(game.bus, game.config);
-const canvasRenderer = new CanvasGameRenderer(canvas, visuals);
+const canvasRenderer = new CanvasGameRenderer(canvas, visuals, el('field-blur') as HTMLCanvasElement);
 let selectedAlchemy: AlchemyNodeId = 'earth';
 let activeTab: 'breach' | 'alchemy' = 'breach';
 let selectedChallenge: number | null = null;
 const renderScreen = createScreenRenderer(game);
 function render(): void {
   renderScreen(selectedAlchemy);
+  const run = getRun(game.bus.read());
+  const dialogueStage = run.postChallenge4DialogueStage;
+  const dialogueId = run.voidDialogueId;
+  const dialogueLines = dialogueId && dialogueId !== 'postChallenge4'
+    ? game.config.presentation.voidUnlocks[dialogueId]?.lines ?? []
+    : dialogueId === 'postChallenge4' ? game.config.presentation.postChallenge4.lines : [];
+  if (dialogueId !== overlayDialogueId) {
+    overlayDialogueId = dialogueId;
+    if (dialogueId !== null) {
+      postChallenge4Overlay.querySelector('.void-dialog')!.innerHTML = dialogueLines.map((line, i) => `<p data-dialog-line="${i}">${line}</p>`).join('');
+      postChallenge4Stage = 0;
+    }
+  }
+  if (postChallenge4Stage > 0 && dialogueStage === 0) hidePostChallenge4Overlay();
+  else if (dialogueStage > 0) {
+    if (postChallenge4Fade !== null) { window.clearTimeout(postChallenge4Fade); postChallenge4Fade = null; }
+    postChallenge4Overlay.classList.remove('hidden', 'fading');
+  }
+  postChallenge4Stage = dialogueStage;
+  postChallenge4Overlay.querySelectorAll<HTMLElement>('[data-dialog-line]').forEach((line, i) => line.classList.toggle('visible', dialogueStage >= i + 1));
   el('breach-view').classList.toggle('hidden', activeTab !== 'breach');
   el('alchemy-view').classList.toggle('hidden', activeTab !== 'alchemy');
   el('tab-breach').classList.toggle('active', activeTab === 'breach');
@@ -54,7 +94,7 @@ function activateButton(target: HTMLButtonElement): void {
   if (target.disabled) return;
   const action = target.dataset.action, value = target.dataset.value ?? '';
   if (action === 'tab' && (value === 'breach' || value === 'alchemy')) activeTab = value;
-  if (action === 'alchemy-node' && ['earth', 'water', 'air', 'fire'].includes(value)) selectedAlchemy = value as AlchemyNodeId;
+  if (action === 'alchemy-node' && ['earth', 'water', 'air', 'fire'].includes(value)) { selectedAlchemy = value as AlchemyNodeId; game.markFractureSeen(value); }
   if (action === 'equip') game.equip(value);
   if (action === 'upgrade') game.buyUpgrade(value);
   if (action === 'debug') game.debugGrantResources();
@@ -64,6 +104,7 @@ function activateButton(target: HTMLButtonElement): void {
   if (action === 'unlock-water') game.unlockWater();
   if (action === 'earth') game.bus.invoke('gameplay', { type: 'earth-buff', payload: null });
   if (action === 'elementalization') game.bus.invoke('gameplay', { type: 'elementalization', payload: null });
+  if (action === 'crystal-flow') game.bus.invoke('gameplay', { type: 'crystal-flow', payload: null });
   if (action === 'earth-overload') game.bus.invoke('gameplay', { type: 'earth-overload', payload: null });
   if (action === 'stimpack') game.bus.invoke('gameplay', { type: 'stimpack', payload: null });
   if (action === 'crystal') game.bus.invoke('alchemy.actions', { type: 'exchange', payload: 'crystallize' });
@@ -73,7 +114,7 @@ function activateButton(target: HTMLButtonElement): void {
   if (target.id === 'challenge-start' && selectedChallenge !== null && game.enterChallenge(selectedChallenge)) selectedChallenge = null;
   if (target.id === 'mine') game.bus.invoke('gameplay', { type: 'click', payload: null });
   if (target.id === 'pause') game.bus.setPaused(!game.bus.read().paused);
-  if (target.id === 'reset' && confirm('Сбросить сохранение нового режима?')) { localStorage.removeItem(SAVE_KEY); location.reload(); }
+  if (target.id === 'reset' && confirm('Сбросить сохранение нового режима?')) { resetting = true; localStorage.removeItem(SAVE_KEY); location.reload(); }
   render();
 }
 app.addEventListener('pointerdown', event => {
@@ -95,8 +136,39 @@ window.addEventListener('keydown', event => {
   if (event.key.toLowerCase() === 'p' || event.key === 'Escape') { game.bus.setPaused(!game.bus.read().paused); render(); }
 });
 let last = performance.now(), rendered = 0, saved = 0;
+// Во время сброса прогресса автосохранение отключено: reload порождает pagehide,
+// который иначе запишет старое состояние обратно сразу после removeItem.
+let resetting = false;
+let lastWall = Date.now();
+let backgroundTimer: number | null = null;
+// Догон по настенным часам: вкладка в фоне не получает rAF, поэтому время симулируем отдельно.
+function catchUp(): void {
+  const offline = game.config.simulation.offlineProgress ? game.config.simulation.maxOfflineSeconds : 0;
+  let debt = Math.max(0, Math.min((Date.now() - lastWall) / 1000, offline));
+  const started = performance.now();
+  while (debt > 1e-6) {
+    const chunk = Math.min(1, debt);
+    game.advance(chunk);
+    debt -= chunk;
+    if (performance.now() - started > 2000) break; // длинный догон не должен замораживать вкладку
+  }
+  lastWall = Date.now();
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') {
+    if (!resetting) game.save();
+    backgroundTimer = window.setInterval(catchUp, 1000);
+  } else {
+    if (backgroundTimer !== null) { window.clearInterval(backgroundTimer); backgroundTimer = null; }
+    catchUp();
+    render();
+    canvasRenderer.draw(game.bus.read());
+  }
+});
+window.addEventListener('pagehide', () => { if (!resetting) game.save(); });
 function frame(now: number): void {
   const dt = Math.min(0.25, Math.max(0, (now - last) / 1000)); last = now;
+  lastWall = Date.now();
   game.advance(dt);
   visuals.tick(dt);
   if (now - rendered > 100) { render(); rendered = now; }

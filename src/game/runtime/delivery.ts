@@ -1,5 +1,5 @@
 import type { AttackPlan, GameModule, StateAccess } from '../core/contracts';
-import { EARTH_MARKED_TAG, type GameCommand } from '../core/model';
+import { EARTH_MARKED_TAG, type DeepReadonly, type GameCommand, type TileState } from '../core/model';
 import { CombatModule, type HitPolicy } from '../combat/combatModule';
 import { StateMapAccess } from '../world/mapAccess';
 
@@ -12,6 +12,11 @@ export class DeliveryModule implements GameModule {
   readonly id = 'combat';
   readonly priority = 30;
   private readonly impacts: CombatModule;
+  private ricochetIndexRevision = -1;
+  private ricochetMapId = '';
+  private ricochetCandidates: { tile: DeepReadonly<TileState>; x: number; y: number }[] = [];
+  private ricochetOccupied = new Uint8Array();
+  private readonly ricochetOffsets = new Map<number, { dx: number; dy: number; weight: number }[]>();
   constructor(policy: HitPolicy, private readonly options: DeliveryOptions = {}) { this.impacts = new CombatModule(policy); }
   onRegister(bus: StateAccess): void { bus.update(s => { s.moduleData.delivery ??= { flights: [], flashes: [] } satisfies DeliveryState; }); }
   query(bus: StateAccess, command: GameCommand): unknown {
@@ -114,26 +119,54 @@ export class DeliveryModule implements GameModule {
   private launchBombardaRicochet(bus: StateAccess, primary: AttackPlan): void {
     const state = bus.read(), actor = state.characters[primary.characterId];
     if (!actor) return;
-    const candidates = Object.values(state.tiles).filter(tile => tile.mapId === actor.mapId && tile.health > 0 && tile.id !== primary.direct.targetId);
+    const map = state.maps[actor.mapId];
+    if (!map) return;
+    if (this.ricochetIndexRevision !== state.tileRevision || this.ricochetMapId !== actor.mapId || this.ricochetOccupied.length !== map.width * map.height) {
+      this.ricochetIndexRevision = state.tileRevision;
+      this.ricochetMapId = actor.mapId;
+      this.ricochetOccupied = new Uint8Array(map.width * map.height);
+      this.ricochetCandidates = [];
+      for (const tile of Object.values(state.tiles)) {
+        if (tile.mapId !== actor.mapId || tile.health <= 0) continue;
+        const x = Math.round(tile.position.x), y = Math.round(tile.position.y);
+        if (x < 0 || y < 0 || x >= map.width || y >= map.height) continue;
+        this.ricochetOccupied[y * map.width + x] = 1;
+        this.ricochetCandidates.push({ tile, x, y });
+      }
+    }
+    const candidates = this.ricochetCandidates;
     if (!candidates.length) return;
     const splash = primary.splash[0];
     const radius = Math.max(0, splash?.radius ?? 0);
+    if (radius <= 0) return;
+    let offsets = this.ricochetOffsets.get(radius);
+    if (!offsets) {
+      offsets = [];
+      const reach = Math.ceil(radius), radiusSquared = radius * radius;
+      for (let dy = -reach; dy <= reach; dy++) for (let dx = -reach; dx <= reach; dx++) {
+        const distanceSquared = dx * dx + dy * dy;
+        if (distanceSquared <= radiusSquared) offsets.push({ dx, dy, weight: 0.35 + 0.65 * Math.max(0, 1 - Math.sqrt(distanceSquared) / Math.max(0.01, radius)) });
+      }
+      this.ricochetOffsets.set(radius, offsets);
+    }
     let target: typeof candidates[number] | undefined, bestScore = 0;
     for (const point of candidates) {
+      if (point.tile.id === primary.direct.targetId || point.tile.health <= 0) continue;
       let score = 0;
-      for (const tile of candidates) {
-        const distance = Math.hypot(tile.position.x - point.position.x, tile.position.y - point.position.y);
-        if (distance <= radius) score += 0.35 + 0.65 * Math.max(0, 1 - distance / Math.max(0.01, radius));
+      for (const offset of offsets) {
+        const x = point.x + offset.dx, y = point.y + offset.dy;
+        if (x >= 0 && y >= 0 && x < map.width && y < map.height &&
+            (x !== primary.direct.point.x || y !== primary.direct.point.y) && this.ricochetOccupied[y * map.width + x]) score += offset.weight;
       }
       if (score > bestScore) { bestScore = score; target = point; }
     }
     if (!target) return;
     const damage = primary.direct.damage * 0.4;
     const attack: AttackPlan = { ...structuredClone(primary), origin: { ...primary.direct.point }, delivery: 'projectile',
-      direct: { ...primary.direct, targetId: target.id, point: { ...target.position }, damage },
-      splash: primary.splash.map(area => ({ ...area, center: { ...target!.position }, damage: area.damage * 0.4, excludedTargetId: target!.id })),
+      direct: { ...primary.direct, targetId: target.tile.id, point: { x: target.x, y: target.y }, damage },
+      splash: primary.splash.map(area => ({ ...area, center: { x: target!.x, y: target!.y }, damage: area.damage * 0.4, excludedTargetId: target!.tile.id })),
       combo: false, dashDistance: 0 };
-    const duration = Math.max(0.05, Math.hypot(target.position.x - attack.origin.x, target.position.y - attack.origin.y) / Math.max(0.01, attack.projectileSpeed));
+    const duration = Math.max(0.05, Math.hypot(target.x - attack.origin.x, target.y - attack.origin.y) / Math.max(0.01, attack.projectileSpeed));
     bus.update(s => { (s.moduleData.delivery as DeliveryState).flights.push({ attack, remaining: duration, duration, ricochet: true }); });
   }
 }

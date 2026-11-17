@@ -1,5 +1,9 @@
 /* Стили для активного интерфейса игры поверх базовых компонентов app.css. */
 .map-wrap canvas { display: block; width: 100%; height: 100%; cursor: pointer; touch-action: manipulation; }
+.map-wrap canvas { position: absolute; inset: 0; }
+#field { opacity: var(--boundary-clear-opacity, 1); }
+#field-blur { z-index: 2; pointer-events: none; opacity: var(--boundary-ghost-opacity, 0); filter: blur(var(--boundary-blur, 0px)); }
+#paused { z-index: 3; }
 .weapon-select { flex-wrap: wrap; }
 .weapon-select .equipment-button { min-width: 105px; }
 .equipment > .combo-wrap { display: flex; }

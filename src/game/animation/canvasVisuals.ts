@@ -48,6 +48,12 @@ function createBombardaExplosionAtlas(): HTMLCanvasElement {
 export class CanvasGameRenderer {
   private readonly ctx: CanvasRenderingContext2D;
   private readonly terrainCanvas = document.createElement('canvas');
+  private readonly blurBuffer = document.createElement('canvas');
+  private readonly blurCanvas?: HTMLCanvasElement;
+  private readonly blurCtx?: CanvasRenderingContext2D;
+  private readonly blurBufferCtx?: CanvasRenderingContext2D;
+  private lastBlurSnapshotAt = -Infinity;
+  private lastBlurMapId = '';
   private readonly bombardaExplosionAtlas = createBombardaExplosionAtlas();
   private readonly pick = new Image();
   private readonly spear = new Image();
@@ -56,10 +62,19 @@ export class CanvasGameRenderer {
   private cachedTerrainKey = '';
   private cachedTerrainRevision = -1;
   private burningTiles: DeepReadonly<GameState['tiles'][string]>[] = [];
-  constructor(private readonly canvas: HTMLCanvasElement, private readonly visuals: GameVisuals) {
+  constructor(private readonly canvas: HTMLCanvasElement, private readonly visuals: GameVisuals, blurCanvas?: HTMLCanvasElement) {
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('Canvas недоступен');
     this.ctx = ctx;
+    this.blurCanvas = blurCanvas;
+    if (blurCanvas) {
+      blurCanvas.width = Math.max(1, Math.floor(canvas.width / 2));
+      blurCanvas.height = Math.max(1, Math.floor(canvas.height / 2));
+      this.blurCtx = blurCanvas.getContext('2d') ?? undefined;
+      this.blurBuffer.width = blurCanvas.width;
+      this.blurBuffer.height = blurCanvas.height;
+      this.blurBufferCtx = this.blurBuffer.getContext('2d') ?? undefined;
+    }
     this.pick.src = `${import.meta.env.BASE_URL}assets/flint-pickaxe.svg`;
     this.spear.src = `${import.meta.env.BASE_URL}assets/metal-spear.svg`;
   }
@@ -74,7 +89,7 @@ export class CanvasGameRenderer {
     ctx.clearRect(0, 0, width, height);
     ctx.fillStyle = '#0b1b25'; ctx.fillRect(0, 0, width, height);
     if (this.cachedLayer !== map.layer) { this.cachedLayer = map.layer; this.noiseCache.clear(); }
-    const reset = this.visuals.transition?.kind === 'reset' ? this.visuals.transition : null;
+    const reset = this.visuals.transition?.kind === 'reset' || this.visuals.transition?.kind === 'boundary-return' ? this.visuals.transition : null;
     const previous = reset?.snapshot ? new Map(reset.snapshot.tiles.map(stone => [`${stone.position.x}:${stone.position.y}`, stone])) : null;
     const wave = reset ? Math.min(1, reset.player.elapsedSeconds / reset.player.clip.durationSeconds) * Math.max(map.width, map.height) * 1.5 : Infinity;
     const terrainKey = `${map.id}:${map.layer}:${width}:${height}`;
@@ -130,20 +145,22 @@ export class CanvasGameRenderer {
       const x = shot.attack.origin.x + (shot.attack.direct.point.x - shot.attack.origin.x) * t;
       const y = shot.attack.origin.y + (shot.attack.direct.point.y - shot.attack.origin.y) * t;
       if (shot.attack.weaponId === 'bombarda') {
+        // Снаряд отрисован вдвое крупнее прежнего: масштаб задаёт локальная единица s.
+        const s = tile * 2;
         const sx = px(x), sy = py(y), dx = px(shot.attack.direct.point.x) - px(shot.attack.origin.x), dy = py(shot.attack.direct.point.y) - py(shot.attack.origin.y);
         ctx.save(); ctx.translate(sx, sy); ctx.rotate(Math.atan2(dy, dx));
-        ctx.shadowColor = '#ff9a45'; ctx.shadowBlur = tile * 0.28;
-        ctx.strokeStyle = 'rgba(255,160,76,.52)'; ctx.lineWidth = Math.max(1, tile * 0.085);
-        ctx.beginPath(); ctx.moveTo(-tile * 0.52, 0); ctx.lineTo(-tile * 0.2, 0); ctx.stroke();
-        const casing = ctx.createLinearGradient(0, -tile * 0.11, 0, tile * 0.11);
+        ctx.shadowColor = '#ff9a45'; ctx.shadowBlur = s * 0.28;
+        ctx.strokeStyle = 'rgba(255,160,76,.52)'; ctx.lineWidth = Math.max(1, s * 0.085);
+        ctx.beginPath(); ctx.moveTo(-s * 0.52, 0); ctx.lineTo(-s * 0.2, 0); ctx.stroke();
+        const casing = ctx.createLinearGradient(0, -s * 0.11, 0, s * 0.11);
         casing.addColorStop(0, '#e0e7e4'); casing.addColorStop(0.24, '#8f9da0'); casing.addColorStop(0.55, '#56666d'); casing.addColorStop(1, '#263941');
-        ctx.fillStyle = casing; ctx.beginPath(); ctx.roundRect(-tile * 0.22, -tile * 0.105, tile * 0.48, tile * 0.21, tile * 0.06); ctx.fill();
-        ctx.strokeStyle = 'rgba(239,246,241,.82)'; ctx.lineWidth = Math.max(1, tile * 0.025);
-        ctx.beginPath(); ctx.moveTo(-tile * 0.12, -tile * 0.07); ctx.lineTo(tile * 0.15, -tile * 0.07); ctx.stroke();
-        ctx.fillStyle = '#b9c5c5'; ctx.fillRect(-tile * 0.03, tile * 0.045, tile * 0.19, tile * 0.032);
-        ctx.fillStyle = '#bc794b'; ctx.beginPath(); ctx.moveTo(tile * 0.26, -tile * 0.095); ctx.lineTo(tile * 0.45, 0); ctx.lineTo(tile * 0.26, tile * 0.095); ctx.closePath(); ctx.fill();
-        ctx.fillStyle = '#394b52'; ctx.beginPath(); ctx.moveTo(-tile * 0.22, -tile * 0.09); ctx.lineTo(-tile * 0.39, -tile * 0.19); ctx.lineTo(-tile * 0.31, -tile * 0.035); ctx.closePath(); ctx.fill();
-        ctx.beginPath(); ctx.moveTo(-tile * 0.22, tile * 0.09); ctx.lineTo(-tile * 0.39, tile * 0.19); ctx.lineTo(-tile * 0.31, tile * 0.035); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = casing; ctx.beginPath(); ctx.roundRect(-s * 0.22, -s * 0.105, s * 0.48, s * 0.21, s * 0.06); ctx.fill();
+        ctx.strokeStyle = 'rgba(239,246,241,.82)'; ctx.lineWidth = Math.max(1, s * 0.025);
+        ctx.beginPath(); ctx.moveTo(-s * 0.12, -s * 0.07); ctx.lineTo(s * 0.15, -s * 0.07); ctx.stroke();
+        ctx.fillStyle = '#b9c5c5'; ctx.fillRect(-s * 0.03, s * 0.045, s * 0.19, s * 0.032);
+        ctx.fillStyle = '#bc794b'; ctx.beginPath(); ctx.moveTo(s * 0.26, -s * 0.095); ctx.lineTo(s * 0.45, 0); ctx.lineTo(s * 0.26, s * 0.095); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = '#394b52'; ctx.beginPath(); ctx.moveTo(-s * 0.22, -s * 0.09); ctx.lineTo(-s * 0.39, -s * 0.19); ctx.lineTo(-s * 0.31, -s * 0.035); ctx.closePath(); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(-s * 0.22, s * 0.09); ctx.lineTo(-s * 0.39, s * 0.19); ctx.lineTo(-s * 0.31, s * 0.035); ctx.closePath(); ctx.fill();
         ctx.restore();
       } else {
         ctx.fillStyle = '#ffd388'; ctx.shadowColor = '#ffae54'; ctx.shadowBlur = 5; ctx.beginPath(); ctx.arc(px(x), py(y), Math.max(2, tile * 0.15), 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
@@ -227,17 +244,23 @@ export class CanvasGameRenderer {
     }
     if (this.visuals.transition) {
       const effect = this.visuals.transition, p = effect.player.pose();
-      const rgb = effect.kind === 'reset' || effect.kind === 'compress' ? '185,144,255' : effect.kind === 'challenge-enter' || effect.kind === 'challenge-exit' ? '105,223,223' : '223,233,255';
+      const rgb = effect.kind === 'reset' || effect.kind === 'boundary-return' || effect.kind === 'compress' ? '185,144,255' : effect.kind === 'challenge-enter' || effect.kind === 'challenge-exit' ? '105,223,223' : '223,233,255';
       const origin = effect.snapshot?.origin;
-      const cx = effect.kind === 'reset' && origin ? px(origin.x) : width / 2;
-      const cy = effect.kind === 'complete' ? oy : effect.kind === 'reset' && origin ? py(origin.y) : height / 2;
+      const isReset = effect.kind === 'reset' || effect.kind === 'boundary-return';
+      const cx = isReset && origin ? px(origin.x) : width / 2;
+      const cy = effect.kind === 'complete' ? oy : isReset && origin ? py(origin.y) : height / 2;
       ctx.fillStyle = `rgba(${rgb},${p.alpha * 0.2})`; ctx.fillRect(0, 0, width, height);
       ctx.strokeStyle = `rgba(${rgb},${p.alpha})`; ctx.lineWidth = Math.max(2, tile * 0.2); ctx.beginPath(); ctx.arc(cx, cy, Math.max(1, p.scaleX * width * 0.4), 0, Math.PI * 2); ctx.stroke();
       if (effect.kind === 'charge') {
         const progress = Math.min(1, effect.player.elapsedSeconds / effect.player.clip.durationSeconds);
         const flicker = 0.7 + 0.3 * Math.sin(this.visuals.elapsed * 12);
         ctx.save(); ctx.shadowColor = '#b4a2ff'; ctx.shadowBlur = 6 + progress * 18; ctx.lineWidth = Math.max(2, tile * (0.08 + progress * 0.12));
-        ctx.strokeStyle = `rgba(238,242,255,${(0.35 + progress * 0.6) * flicker})`; ctx.beginPath(); ctx.moveTo(ox, oy - 2); ctx.lineTo(ox + map.width * tile, oy - 2); ctx.stroke();
+        const boundaryCount = Math.min(16, Math.max(1, effect.boundaryCount ?? 1));
+        for (let boundary = 0; boundary < boundaryCount; boundary++) {
+          const y = oy - 2 - boundary * tile * 0.12;
+          ctx.strokeStyle = `rgba(238,242,255,${(0.35 + progress * 0.6) * flicker * (1 - boundary / (boundaryCount * 2))})`;
+          ctx.beginPath(); ctx.moveTo(ox, y); ctx.lineTo(ox + map.width * tile, y); ctx.stroke();
+        }
         for (let i = 0; i < 8; i++) { const x = ox + map.width * tile * (i + 0.5) / 8; ctx.fillStyle = `rgba(195,197,255,${0.1 + progress * 0.15})`; ctx.beginPath(); ctx.arc(x, oy - tile * (0.2 + progress * (i % 3 + 1)), tile * (0.15 + progress * 0.3), 0, Math.PI * 2); ctx.fill(); }
         ctx.restore();
       }
@@ -253,6 +276,23 @@ export class CanvasGameRenderer {
         ctx.restore();
       }
     }
+    this.updateBoundaryBlur(state, map.id);
+  }
+
+  private updateBoundaryBlur(state: DeepReadonly<GameState>, mapId: string): void {
+    const run = state.moduleData.run as { challenge?: number; layer?: number; boundary?: number | null; boundaryReturnRemaining?: number } | undefined;
+    const unstable = !run?.challenge && (run?.layer ?? 0) >= this.visuals.config.world.outsideBoundaryLayer
+      && (state.upgradeLevels['infinity.breakthrough'] ?? 0) >= 2 && run?.boundary !== null;
+    const returning = (run?.boundaryReturnRemaining ?? 0) > 0;
+    if (!this.blurCanvas || !this.blurCtx || !this.blurBufferCtx || (!unstable && !returning)) return;
+    const now = performance.now();
+    if (mapId === this.lastBlurMapId && now - this.lastBlurSnapshotAt < 120) return;
+    this.lastBlurMapId = mapId;
+    this.lastBlurSnapshotAt = now;
+    this.blurBufferCtx.clearRect(0, 0, this.blurBuffer.width, this.blurBuffer.height);
+    this.blurBufferCtx.drawImage(this.canvas, 0, 0, this.blurBuffer.width, this.blurBuffer.height);
+    this.blurCtx.clearRect(0, 0, this.blurCanvas.width, this.blurCanvas.height);
+    this.blurCtx.drawImage(this.blurBuffer, 0, 0);
   }
 
   private paintTerrain(target: CanvasRenderingContext2D, state: DeepReadonly<GameState>, map: DeepReadonly<GameState['maps'][string]>,
@@ -260,10 +300,11 @@ export class CanvasGameRenderer {
     palette: ReturnType<typeof stonePaletteForLayer>, previous?: Map<string, DeepReadonly<GameState['tiles'][string]>> | null,
     origin?: { x: number; y: number }, wave = Infinity): DeepReadonly<GameState['tiles'][string]>[] {
     const burning: DeepReadonly<GameState['tiles'][string]>[] = [];
-    for (const current of Object.values(state.tiles)) {
-      if (current.mapId !== map.id) continue;
-      const stone = previous && origin && Math.hypot(current.position.x - origin.x, current.position.y - origin.y) > wave
-        ? previous.get(`${current.position.x}:${current.position.y}`) : current;
+    for (let y = 0; y < map.height; y++) for (let x = 0; x < map.width; x++) {
+      const current = state.tiles[`${map.id}:${x}:${y}`];
+      if (!current || current.mapId !== map.id) continue;
+      const stone = previous && origin && Math.hypot(x - origin.x, y - origin.y) > wave
+        ? previous.get(`${x}:${y}`) : current;
       if (!stone) continue;
       this.paintTile(target, stone, map, tileSize, ox, oy, px, py, palette);
       if (stone.tags.includes('burning')) burning.push(stone);
@@ -278,6 +319,18 @@ export class CanvasGameRenderer {
       const left = Math.round(ox + stone.position.x * tileSize), right = Math.round(ox + (stone.position.x + 1) * tileSize);
       const top = Math.round(oy + stone.position.y * tileSize), bottom = Math.round(oy + (stone.position.y + 1) * tileSize);
       const x = ox + stone.position.x * tileSize, y = oy + stone.position.y * tileSize;
+    if (stone.tags.includes('boundary-gate')) {
+      const pulse = 0.58 + 0.18 * Math.sin(this.visuals.elapsed * 5);
+      target.fillStyle = `rgba(28,20,55,${pulse})`;
+      target.fillRect(left, top, right - left, bottom - top);
+      target.fillStyle = `rgba(132,105,220,${0.18 + 0.12 * Math.sin(this.visuals.elapsed * 3)})`;
+      target.fillRect(left, top, right - left, bottom - top);
+      if (tileSize > 5) {
+        target.fillStyle = `rgba(183,230,255,${0.25 + 0.16 * Math.sin(this.visuals.elapsed * 6)})`;
+        target.fillRect(left + (right - left) * 0.46, top, Math.max(1, (right - left) * 0.08), bottom - top);
+      }
+      return;
+    }
     target.fillStyle = stone.kind === 'elemental' ? palette.elemental : stone.kind === 'hard' ? palette.hard : palette.stone;
       target.fillRect(left, top, right - left, bottom - top);
     const key = `${stone.position.x}:${stone.position.y}`;
@@ -288,6 +341,11 @@ export class CanvasGameRenderer {
     }
     target.fillStyle = noise >= 0 ? `rgba(244,225,186,${Math.min(0.3, Math.abs(noise) * 0.55)})` : `rgba(23,39,56,${Math.min(0.3, Math.abs(noise) * 0.55)})`;
       target.fillRect(left, top, right - left, bottom - top);
+    if (map.tags.includes('unstable-boundary')) {
+      const pulse = 0.08 + 0.035 * Math.sin(this.visuals.elapsed * 4 + stone.position.x * 0.3 + stone.position.y * 0.2);
+      target.fillStyle = `rgba(140,102,190,${pulse})`;
+      target.fillRect(left, top, right - left, bottom - top);
+    }
     const variation = (stone.position.x * 17 + stone.position.y * 31 + map.layer * 7) % 7;
     if (variation < 3) { target.fillStyle = variation === 0 ? 'rgba(255,255,255,.07)' : 'rgba(23,35,43,.07)'; target.beginPath(); target.arc(px(stone.position.x) + tileSize * 0.16, py(stone.position.y) - tileSize * 0.1, tileSize * 0.18, 0, Math.PI * 2); target.fill(); }
     if (stage > 0 && tileSize > 5) {

@@ -10,6 +10,8 @@ export interface StateAccess {
   emit(event: GameEvent): void;
   invoke(moduleId: ModuleId, command: GameCommand): boolean;
   query(moduleId: ModuleId, query: GameCommand): unknown;
+  isEnabled(moduleId: ModuleId): boolean;
+  setEnabled(moduleId: ModuleId, enabled: boolean): void;
   listModules(): readonly { id: ModuleId; enabled: boolean; priority: number }[];
 }
 
@@ -84,6 +86,8 @@ export interface WeaponContext {
   tiles: readonly DeepReadonly<TileState>[];
   runtime: DeepReadonly<WeaponRuntimeState>;
   seconds: number;
+  /** Размеры текущей карты персонажа; оружия используют их для позиционных весов движения. */
+  mapSize?: { width: number; height: number };
   /** Урон, уже зарезервированный летящими снарядами и атаками этого же шага. */
   predictedDamage?: Record<string, number>;
   /** Огненный режим игломёта пропускает уже горящие и зарезервированные клетки. */

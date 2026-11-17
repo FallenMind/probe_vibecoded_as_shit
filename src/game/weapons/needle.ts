@@ -7,19 +7,33 @@ export class NeedleGun extends BaseWeapon {
   readonly control = 'autonomous' as const;
   protected readonly delivery = 'projectile' as const;
   protected selectTarget(context: WeaponContext): DeepReadonly<TileState> | undefined {
-    if (context.prioritizeUnburned) {
-      const unburned = context.tiles.filter(tile => tile.mapId === context.character.mapId && !tile.tags.includes('burning'));
-      if (unburned.length === 0) return this.selectStandardTarget(context);
-      return unburned.filter(tile => !context.reservedFireTargets?.has(tile.id) &&
-        tile.health - (context.predictedDamage?.[tile.id] ?? 0) > 1e-9)
-        .reduce<DeepReadonly<TileState> | undefined>((best, tile) => !best || tile.position.y > best.position.y ||
-          (tile.position.y === best.position.y && Math.abs(tile.position.x - context.character.position.x) < Math.abs(best.position.x - context.character.position.x)) ? tile : best, undefined);
+    let best: DeepReadonly<TileState> | undefined, bestDistance = Infinity, hasUnburned = false;
+    const findUnburned = !!context.prioritizeUnburned;
+    for (const tile of context.tiles) {
+      if (tile.mapId !== context.character.mapId || (findUnburned && tile.tags.includes('burning'))) continue;
+      if (findUnburned) hasUnburned = true;
+      if (findUnburned && context.reservedFireTargets?.has(tile.id)) continue;
+      const remaining = tile.health - (context.predictedDamage?.[tile.id] ?? 0);
+      if (remaining <= 1e-9) continue;
+      const horizontalDistance = Math.abs(tile.position.x - context.character.position.x);
+      if (!best || tile.position.y > best.position.y || (tile.position.y === best.position.y && horizontalDistance < bestDistance)) {
+        best = tile;
+        bestDistance = horizontalDistance;
+      }
     }
+    if (best || !findUnburned || hasUnburned) return best;
     return this.selectStandardTarget(context);
   }
   private selectStandardTarget(context: WeaponContext): DeepReadonly<TileState> | undefined {
-    return context.tiles.filter(tile => tile.mapId === context.character.mapId && tile.health - (context.predictedDamage?.[tile.id] ?? 0) > 1e-9)
-      .reduce<DeepReadonly<TileState> | undefined>((best, tile) => !best || tile.position.y > best.position.y ||
-        (tile.position.y === best.position.y && Math.abs(tile.position.x - context.character.position.x) < Math.abs(best.position.x - context.character.position.x)) ? tile : best, undefined);
+    let best: DeepReadonly<TileState> | undefined, bestDistance = Infinity;
+    for (const tile of context.tiles) {
+      if (tile.mapId !== context.character.mapId || tile.health - (context.predictedDamage?.[tile.id] ?? 0) <= 1e-9) continue;
+      const horizontalDistance = Math.abs(tile.position.x - context.character.position.x);
+      if (!best || tile.position.y > best.position.y || (tile.position.y === best.position.y && horizontalDistance < bestDistance)) {
+        best = tile;
+        bestDistance = horizontalDistance;
+      }
+    }
+    return best;
   }
 }

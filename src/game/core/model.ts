@@ -60,6 +60,8 @@ export interface GameState {
   primaryCharacterId: CharacterId | null;
   characters: Record<CharacterId, CharacterState>;
   maps: Record<string, MapState>;
+  /** Increments when tile membership changes; hot-path indexes can rebuild without rescanning every tick. */
+  tileRevision: number;
   resources: Record<ResourceId, ResourceState>;
   tiles: Record<string, TileState>;
   upgradeLevels: Record<UpgradeId, number>;
@@ -78,5 +80,5 @@ export interface GameCommand<T = unknown> { type: string; payload: T }
 
 export function createEmptyState(): GameState {
   return { version: 1, paused: false, elapsedSeconds: 0, primaryCharacterId: null,
-    characters: {}, maps: {}, resources: {}, tiles: {}, upgradeLevels: {}, upgradeEnabled: {}, upgradeSuppressions: {}, moduleData: {} };
+    characters: {}, maps: {}, tileRevision: 0, resources: {}, tiles: {}, upgradeLevels: {}, upgradeEnabled: {}, upgradeSuppressions: {}, moduleData: {} };
 }

@@ -44,7 +44,9 @@ export class StateMapAccess implements MapAccess {
     if (!this.getMap(id) || Object.values(this.bus.read().characters).some(character => character.mapId === id)) return false;
     this.bus.update(state => {
       delete state.maps[id];
-      for (const [tileId, tile] of Object.entries(state.tiles)) if (tile.mapId === id) delete state.tiles[tileId];
+      let removed = false;
+      for (const [tileId, tile] of Object.entries(state.tiles)) if (tile.mapId === id) { delete state.tiles[tileId]; removed = true; }
+      if (removed) state.tileRevision++;
     });
     this.bus.emit({ type: 'map.removed', source: 'world', payload: { mapId: id } });
     return true;
@@ -82,7 +84,7 @@ export class StateMapAccess implements MapAccess {
         (map.tags.includes('coordinate-indexed') && tile.id !== `${map.id}:${x}:${y}`) ||
         !Number.isFinite(tile.health) || !Number.isFinite(tile.maxHealth) || tile.maxHealth <= 0 ||
         tile.health <= 0 || tile.health > tile.maxHealth || !Number.isFinite(tile.armor) || tile.armor < 0) return false;
-    this.bus.update(state => { state.tiles[tile.id] = structuredClone(tile); });
+    this.bus.update(state => { state.tiles[tile.id] = structuredClone(tile); state.tileRevision++; });
     this.bus.emit({ type: 'tile.added', source: 'world', payload: { mapId: tile.mapId, tileId: tile.id, position: { x, y } } });
     return true;
   }
@@ -91,7 +93,7 @@ export class StateMapAccess implements MapAccess {
     const tile = this.getTile(id);
     if (!tile) return false;
     const payload = { mapId: tile.mapId, tileId: id, position: { ...tile.position } };
-    this.bus.update(state => { delete state.tiles[id]; });
+    this.bus.update(state => { delete state.tiles[id]; state.tileRevision++; });
     this.bus.emit({ type: 'tile.removed', source: 'world', payload });
     return true;
   }
@@ -144,7 +146,7 @@ export class StateMapAccess implements MapAccess {
         const actual = Math.min(current.health, damage);
         const remainingHealth = Math.max(0, current.health - actual);
         const result = { tile: structuredClone(current), damage: actual, remainingHealth, destroyed: remainingHealth === 0 };
-        if (result.destroyed) delete state.tiles[tile.id];
+        if (result.destroyed) { delete state.tiles[tile.id]; state.tileRevision++; }
         else current.health = remainingHealth;
         results.push(result);
       }

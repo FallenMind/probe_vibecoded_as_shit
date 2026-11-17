@@ -11,8 +11,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 0.0.0.0",
     "typecheck": "tsc --noEmit",
-    "test": "node --test src/game/framework.test.mjs tests/frameworkRuntime.test.mjs",
-    "test:framework": "node --test src/game/framework.test.mjs tests/frameworkRuntime.test.mjs"
+    "test": "node --test src/game/framework.test.mjs tests/frameworkRuntime.test.mjs tests/alchemyOverflow.test.mjs",
+    "test:framework": "node --test src/game/framework.test.mjs tests/frameworkRuntime.test.mjs tests/alchemyOverflow.test.mjs"
   },
   "devDependencies": {
     "typescript": "7.0.2",

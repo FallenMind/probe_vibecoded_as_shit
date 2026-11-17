@@ -77,7 +77,7 @@ export class RepeatableUpgrade implements Upgrade {
   canBuy(bus: StateAccess): boolean {
     const state = bus.read();
     const level = state.upgradeLevels[this.id] ?? 0;
-    const discount = this.definition.tags?.includes('repeatable') && (state.upgradeLevels['cycle.16'] ?? 0) > 0 && state.upgradeEnabled['cycle.16'] !== false ? 0.97 : 1;
+    const discount = this.id !== 'infinity.breakthrough' && this.definition.tags?.includes('repeatable') && (state.upgradeLevels['cycle.16'] ?? 0) > 0 && state.upgradeEnabled['cycle.16'] !== false ? 0.97 : 1;
     if (state.paused || level >= this.definition.maxLevel) return false;
     for (const [id, required] of Object.entries(this.definition.requiresUpgrades)) if ((state.upgradeLevels[id] ?? 0) < required) return false;
     for (const [id, required] of Object.entries(this.definition.requiresResources)) if ((state.resources[id]?.amount ?? 0) < required) return false;
@@ -87,7 +87,7 @@ export class RepeatableUpgrade implements Upgrade {
     if (!this.canBuy(bus)) return false;
     const level = bus.read().upgradeLevels[this.id] ?? 0;
     const state = bus.read();
-    const discount = this.definition.tags?.includes('repeatable') && (state.upgradeLevels['cycle.16'] ?? 0) > 0 && state.upgradeEnabled['cycle.16'] !== false ? 0.97 : 1;
+    const discount = this.id !== 'infinity.breakthrough' && this.definition.tags?.includes('repeatable') && (state.upgradeLevels['cycle.16'] ?? 0) > 0 && state.upgradeEnabled['cycle.16'] !== false ? 0.97 : 1;
     if (!bus.exchange(this.cost(level, discount, state), {})) return false;
     bus.update(state => {
       state.upgradeLevels[this.id] = level + 1;

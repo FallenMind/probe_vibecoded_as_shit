@@ -8,7 +8,7 @@ export interface AttackVisual { actor: string; weapon: string; origin: Point; ta
 export interface DashVisual { actor: string; from: Point; to: Point; player: AnimationPlayer }
 export interface ImpactVisual { position: Point; kind: string; radius?: number; player: AnimationPlayer }
 export interface ResetVisualSnapshot { origin: Point; tiles: readonly TileState[] }
-export interface TransitionVisual { kind: 'reset' | 'complete' | 'challenge-enter' | 'challenge-exit' | 'layer' | 'compress' | 'charge'; player: AnimationPlayer; snapshot?: ResetVisualSnapshot }
+export interface TransitionVisual { kind: 'reset' | 'boundary-return' | 'complete' | 'challenge-enter' | 'challenge-exit' | 'layer' | 'compress' | 'charge'; player: AnimationPlayer; snapshot?: ResetVisualSnapshot; boundaryCount?: number }
 
 const pose = (x = 0, y = 0, rotation = 0, scaleX = 1, scaleY = 1, alpha = 1): AnimationPose => ({ x, y, rotation, scaleX, scaleY, alpha });
 const frames = (weapon: string, combo: boolean) => {
@@ -33,9 +33,9 @@ export class GameVisuals {
   private readonly unsubscribe: () => void;
   constructor(private readonly bus: StateBus, readonly config: FrameworkConfig) {
     this.unsubscribe = bus.subscribe(event => this.onEvent(event));
-    const run = bus.read().moduleData.run as { endChargeRemaining?: number } | undefined;
+    const run = bus.read().moduleData.run as { endChargeRemaining?: number; endChargeDuration?: number } | undefined;
     if (run?.endChargeRemaining && run.endChargeRemaining > 0) {
-      this.onEvent({ type: 'run.visual-transition', source: 'gameplay', payload: { kind: 'charge' } });
+      this.onEvent({ type: 'run.visual-transition', source: 'gameplay', payload: { kind: 'charge', durationSeconds: run.endChargeDuration } });
       if (this.transition) this.transition.player.elapsedSeconds = Math.max(0, this.transition.player.clip.durationSeconds - run.endChargeRemaining);
     }
   }
@@ -60,7 +60,7 @@ export class GameVisuals {
       const t = visual.player.pose().x;
       return { x: visual.from.x + (visual.to.x - visual.from.x) * t, y: visual.from.y + (visual.to.y - visual.from.y) * t };
     }
-    if (this.transition?.kind === 'reset') {
+    if (this.transition?.kind === 'reset' || this.transition?.kind === 'boundary-return') {
       const t = Math.min(1, this.transition.player.elapsedSeconds / this.transition.player.clip.durationSeconds);
       const from = this.transition.snapshot?.origin ?? { x: fallback.x, y: fallback.y - 2 };
       const ease = 1 - (1 - t) ** 3;
@@ -117,13 +117,14 @@ export class GameVisuals {
           [{ at: 0, pose: pose(0, 0, 0, 0.18, 0.18, 1) }, { at: 0.32, pose: pose(0, 0, 0, 1.15, 1.15, 0.72) }, { at: 1, pose: pose(0, 0, 0, 1.7, 1.7, 0) }]) });
       if (this.impacts.length > 48) this.impacts.splice(0, this.impacts.length - 48);
     } else if (event.type === 'run.visual-transition') {
-      const { kind, snapshot } = event.payload as { kind: TransitionVisual['kind']; snapshot?: ResetVisualSnapshot };
+      const { kind, snapshot, durationSeconds, boundaryCount } = event.payload as { kind: TransitionVisual['kind']; snapshot?: ResetVisualSnapshot; durationSeconds?: number; boundaryCount?: number };
       this.attacks.clear(); this.dashes.clear(); this.damageFlashes.clear(); this.impacts = []; this.targets.clear();
-      const duration = kind === 'charge' ? Math.max(0.01, this.config.world.finalChargeSeconds) : kind === 'reset' ? 0.8 : 0.6;
+      const duration = kind === 'charge' ? Math.max(0.01, durationSeconds ?? this.config.world.finalChargeSeconds)
+        : kind === 'boundary-return' ? 1 : kind === 'reset' ? 0.8 : 0.6;
       const keyframes = kind === 'charge'
         ? [{ at: 0, pose: pose(0, 0, 0, 0.15, 0.15, 0.1) }, { at: 1, pose: pose(0, 0, 0, 0.75, 0.75, 0.9) }]
         : [{ at: 0, pose: pose(0, 0, 0, 0.1, 0.1, 0.5) }, { at: 1, pose: pose(0, 0, 0, 2, 2, 0) }];
-      this.transition = { kind, player: this.player('transition', duration, keyframes), snapshot };
+      this.transition = { kind, player: this.player('transition', duration, keyframes), snapshot, boundaryCount };
     }
   }
 }

@@ -37,7 +37,7 @@ export interface FrameworkConfig {
     elementalMineralThreshold: number; elementalRampStartThreshold: number; elementalBossThreshold: number;
     hardMineralFirstLayer: number; elementalMineralFirstLayer: number; elementalMineralFullLayer: number;
     bossEveryLayers: number; bossHealthMultiplier: number; bossTimeSeconds: number;
-    boundaryEnabled: boolean; boundarySpeed: number; compressorEnabled: boolean; compressorRemainingFraction: number; compressorUnlockLayer: number; compressorCost: number; finalChargeSeconds: number;
+    boundaryEnabled: boolean; boundarySpeed: number; outsideBoundaryLayer: number; outsideBoundarySeconds: number; extendedLayers: number; boundaryGateHealthMultiplier: number; foldingHealthMultiplier: number; compressorEnabled: boolean; compressorRemainingFraction: number; compressorUnlockLayer: number; compressorCost: number; finalChargeSeconds: number; stoneShatterFactor: number;
   };
   characters: { maxCount: number; baseMovementSpeed: number; baseAttackSpeed: number; spawnX: number; spawnY: number };
   movement: { strategy: string; stopDistance: number; retargetSeconds: number; diagonal: boolean; collision: boolean };
@@ -46,11 +46,11 @@ export interface FrameworkConfig {
     unlockCosts: Record<'water', ResourceAmounts>;
     recipes: Record<'earth' | 'water' | 'air' | 'fire' | 'vulcanization', RecipeConfig> & Record<string, RecipeConfig>;
     actions: Record<string, AlchemyActionConfig>;
-    buffs: { earthDamageMultiplier: number; earthPerHit: number; elementalizationChance: number; airPerSecond: number; overloadSeconds: number; overloadUpgradeCost: ResourceAmounts; fireReactionUnlockCosts: { vulcanization: ResourceAmounts; decomposition: ResourceAmounts } } };
+    buffs: { earthDamageMultiplier: number; earthPerHit: number; elementalizationChance: number; airPerSecond: number; overloadSeconds: number; overloadUpgradeCost: ResourceAmounts; fireReactionUnlockCosts: { vulcanization: ResourceAmounts; decomposition: ResourceAmounts }; crystalFlowWaterPerSecond: number; crystalFlowCrystalsPerSecond: number } };
   progression: { breakthroughPerCompletion: number; resetOre: boolean; resetAlchemy: boolean; retainCrystals: boolean; retainUpgrades: boolean };
   input: { clickBufferCapacity: number; clickGainPerPress: number; clickFlatDecayPerSecond: number; clickFractionDecayPerSecond: number; miningSpeedBonus: number; movementSpeedBonus: number; emitterSpeedMaxBonus: number };
   artifacts: { enabled: boolean; adjacentMaps: number; neighborhoodRadius: number; isolationMultiplier: number; tickSeconds: number };
-  challenges: Record<string, { enabled: boolean; width: number; height: number; timeLimitSeconds: number | null; stoneHealthMultiplier: number; stoneHealthMinimumMultiplier?: number; regenerationFractionPerSecond: number; allowSplash: boolean; allowArtifacts: boolean }>;
-  presentation: { showDamage: boolean; showPredictions: boolean; animationSpeed: number; particlesEnabled: boolean; palettesEnabled: boolean };
+  challenges: Record<string, { enabled: boolean; width: number; height: number; timeLimitSeconds: number | null; stoneHealthMultiplier: number; stoneHealthMaxMultiplier?: number; stoneHealthMinimumMultiplier?: number; regenerationFractionPerSecond: number; allowSplash: boolean; allowArtifacts: boolean }>;
+  presentation: { showDamage: boolean; showPredictions: boolean; animationSpeed: number; particlesEnabled: boolean; palettesEnabled: boolean; postChallenge4: { lines: string[]; secondsPerLine: number; fadeSeconds: number }; voidUnlocks: Record<string, { lines: string[] }> };
   saving: { enabled: boolean; autosaveSeconds: number; schemaVersion: number };
 }

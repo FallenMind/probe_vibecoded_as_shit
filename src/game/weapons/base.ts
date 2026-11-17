@@ -1,6 +1,6 @@
 import type { WeaponConfig } from '../config/schema';
 import type { AttackPlan, Weapon, WeaponContext, WeaponResult } from '../core/contracts';
-import type { DeepReadonly, TileState } from '../core/model';
+import type { DeepReadonly, Point, TileState } from '../core/model';
 
 export abstract class BaseWeapon implements Weapon {
   abstract readonly id: string;
@@ -10,6 +10,11 @@ export abstract class BaseWeapon implements Weapon {
   get comboAvailable(): boolean { return this.config.combo.enabled; }
   protected splashShape(combo: boolean): WeaponConfig['area']['shape'] {
     return combo && this.config.area.shape === 'single' ? 'circle' : this.config.area.shape;
+  }
+
+  /** Точка назначения движения; по умолчанию — позиция цели, подклассы могут добавлять позиционные веса. */
+  protected movementDestination(context: WeaponContext, target: DeepReadonly<TileState>): Point {
+    return { ...target.position };
   }
 
   protected selectTarget(context: WeaponContext): DeepReadonly<TileState> | undefined {
@@ -36,7 +41,7 @@ export abstract class BaseWeapon implements Weapon {
     if (this.control === 'movement') {
       // Controlled weapons keep moving toward their target during attack ticks.
       // Plan the attack first so its origin and splash center use this position.
-      result.movement = { characterId: context.character.id, destination: { ...target.position },
+      result.movement = { characterId: context.character.id, destination: this.movementDestination(context, target),
         stopDistance: this.id === 'fists' ? 0.35 : this.id === 'pick' ? 0.5 : this.id === 'bombarda' ? Math.min(1.5, interactionRange)
           : this.id === 'spear' && distance <= interactionRange ? 0.5 : interactionRange, speedMultiplier: 1 };
     }
@@ -91,7 +96,13 @@ export abstract class BaseWeapon implements Weapon {
   protected createPlan(context: WeaponContext, target: DeepReadonly<TileState>, combo: boolean, attackSpeedMultiplier = 1): AttackPlan {
     const c = this.config;
     const damage = (context.resolveStat?.(c.damage, ['weapon.damage', `weapon.${c.damageCategory}.damage`, `weapon.${this.id}.damage`]) ?? c.damage) * (combo ? c.combo.damageMultiplier : 1);
-    const radius = (context.resolveStat?.(c.area.radius, ['weapon.splash.radius', `weapon.${c.damageCategory}.splash.radius`, `weapon.${this.id}.splash.radius`]) ?? c.area.radius) + (combo ? c.combo.extraRadius : 0);
+    const areaRadius = context.resolveStat?.(c.area.radius, ['weapon.splash.radius', `weapon.${c.damageCategory}.splash.radius`, `weapon.${this.id}.splash.radius`]) ?? c.area.radius;
+    const fistComboRadius = combo && this.id === 'fists'
+      ? context.resolveStat?.(0, ['weapon.fists.combo.splash.radius']) ?? 0
+      : 0;
+    const radius = combo && this.id === 'fists'
+      ? c.combo.extraRadius + fistComboRadius
+      : areaRadius + (combo ? c.combo.extraRadius : 0);
     const penetration = context.resolveStat?.(c.armorPenetration, ['weapon.armorPenetration', `weapon.${this.id}.armorPenetration`]) ?? c.armorPenetration;
     const elementalPenetration = context.resolveStat?.(c.elementalPenetration, [`weapon.${this.id}.elementalPenetration`]) ?? c.elementalPenetration;
     const shape = this.splashShape(combo);

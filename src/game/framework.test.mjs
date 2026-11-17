@@ -201,12 +201,10 @@ test('рецепт перерабатывает долю запаса и ост�
   assert.equal(bus.read().resources.earth.amount, 10);
   bus.setPaused(true);
   bus.tick(10);
-  assert.equal(bus.invoke('alchemy.earth', { type: 'set-enabled', payload: false }), false);
   assert.equal(bus.read().resources.stone.amount, 90);
   bus.setPaused(false);
-  assert.equal(bus.invoke('alchemy.earth', { type: 'set-enabled', payload: false }), true);
   bus.tick(1);
-  assert.equal(bus.read().resources.stone.amount, 90);
+  assert.ok(bus.read().resources.stone.amount < 90);
 });
 
 test('оружие планирует атаки для каждого персонажа со своим таймером', () => {
@@ -383,16 +381,18 @@ test('пайплайн усилений подключён к урону пря�
   assert.equal(attacks.at(-1).direct.damage, 4);
 });
 
-test('огненный рецепт требует Землю и Воздух и приостанавливается при нехватке', () => {
+test('огненный рецепт перерабатывает Воздух и приостанавливается без него', () => {
   const { bus } = createDraftFramework();
   bus.setEnabled('alchemy.earth', false);
   bus.setEnabled('alchemy.water', false);
   bus.setEnabled('alchemy.air', false);
-  assert.equal(bus.exchange({}, { fire: 1, earth: 100, air: 10 }), true);
-  bus.tick(5);
-  assert.equal(bus.read().resources.stone.amount, 50);
-  assert.equal(bus.read().resources.water.amount, 10);
-  assert.equal(bus.exchange({ air: 1 }, {}), true);
-  bus.tick(5);
-  assert.equal(bus.read().resources.stone.amount, 50);
+  assert.equal(bus.exchange({}, { air: 10 }), true);
+  bus.tick(3.5);
+  assert.ok(bus.read().resources.fire.amount > 0);
+  assert.ok(bus.read().resources.air.amount < 10);
+  const fire = bus.read().resources.fire.amount;
+  assert.equal(bus.exchange({ air: bus.read().resources.air.amount }, {}), true);
+  bus.tick(3.5);
+  assert.equal(bus.read().resources.fire.amount, fire);
+  assert.equal(bus.read().resources.air.amount, 0);
 });

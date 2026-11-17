@@ -1,11 +1,5 @@
-import { AirRecipe } from './alchemy/air';
 import { AlchemyRecipe } from './alchemy/recipe';
-import { DecompositionRecipe } from './alchemy/decomposition';
 import { AlchemyActions } from './alchemy/actions';
-import { EarthRecipe } from './alchemy/earth';
-import { FireRecipe } from './alchemy/fire';
-import { WaterRecipe } from './alchemy/water';
-import { VulcanizationRecipe } from './alchemy/vulcanization';
 import { DEFAULT_CONFIG } from './config/defaults';
 import type { FrameworkConfig } from './config/schema';
 import { addCharacter } from './core/characters';
@@ -31,14 +25,14 @@ export function createDraftFramework(source: FrameworkConfig = DEFAULT_CONFIG, i
   if (config.modules.weapons) bus.register(new WeaponModule([
     new Fists(config.weapons.fists), new Pick(config.weapons.pick), new Spear(config.weapons.spear),
     new NeedleGun(config.weapons.needle), new Emitter(config.weapons.emitter), new Bombarda(config.weapons.bombarda),
-  ], config.input, config.alchemy.buffs.earthDamageMultiplier));
+  ], config.input, config.alchemy.buffs.earthDamageMultiplier, config.world));
   if (config.modules.alchemy) {
-    bus.register(new EarthRecipe(config.alchemy.recipes.earth));
-    bus.register(new WaterRecipe(config.alchemy.recipes.water));
-    bus.register(new AirRecipe(config.alchemy.recipes.air));
-    bus.register(new FireRecipe(config.alchemy.recipes.fire));
-    bus.register(new VulcanizationRecipe(config.alchemy.recipes.vulcanization));
-    bus.register(new DecompositionRecipe(config.alchemy.recipes.decomposition));
+    bus.register(new AlchemyRecipe(config.alchemy.recipes.earth));
+    bus.register(new AlchemyRecipe(config.alchemy.recipes.water));
+    bus.register(new AlchemyRecipe(config.alchemy.recipes.air));
+    bus.register(new AlchemyRecipe(config.alchemy.recipes.fire));
+    bus.register(new AlchemyRecipe(config.alchemy.recipes.vulcanization));
+    bus.register(new AlchemyRecipe(config.alchemy.recipes.decomposition));
     bus.register(new AlchemyActions(config.alchemy.actions));
   }
   if (config.modules.upgrades) bus.register(new UpgradeModule(exampleUpgrades));
