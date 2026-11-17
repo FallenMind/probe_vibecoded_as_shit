@@ -27,7 +27,7 @@ export interface NativeRun {
 }
 export const equipment = [
   { id: 'fists', name: 'Кулаки', cost: 0, layer: 0, kind: 'melee' },
-  { id: 'pick', name: 'Кремниевая кирка', cost: 1500, layer: 3, kind: 'melee' },
+  { id: 'pick', name: 'Кремниевая кирка', cost: 750, layer: 3, kind: 'melee' },
   { id: 'spear', name: 'Копьё', cost: 15000, layer: 25, kind: 'melee' },
   { id: 'bombarda', name: 'Бомбарда', cost: 75000, layer: 50, kind: 'melee' },
   { id: 'needle', name: 'Игломёт', cost: 150, layer: 1, kind: 'ranged' },
@@ -98,17 +98,26 @@ const foldingCosts: readonly ResourceAmounts[] = [
   { earth: 10000, water: 2000, air: 1000, fire: 1000 },
 ];
 const upgrades = (config: FrameworkConfig) => [
-  ...upgradeItems.map(item => new RepeatableUpgrade({ id: item.id, name: item.name, description: item.description,
-    maxLevel: 'maxLevel' in item && typeof item.maxLevel === 'number' ? item.maxLevel : 1000, baseCost: { ore: item.cost },
-    priceHandler: item.id === 'fists.radius' ? ({ level }) => ({ ore: [0, 150, 1000, 5000, 25000, 100000, 500000][level] ?? 0 }) : undefined,
-    outputHandler: item.id === 'movement.speed' ? ({ current, level }) => current + 0.75 * level
-      : item.id === 'penetration' ? ({ level }) => level <= 0 ? 0 : Math.min(0.85, 0.25 + (level - 1) * 0.15) : undefined,
-    costMultiplier: item.id === 'fists.speed' || item.id === 'needle.speed' ? 1.7 : ['movement.speed', 'penetration'].includes(item.id) ? 1.55 : 1.8, requiresUpgrades: {}, requiresResources: {},
-    tags: ['repeatable', item.id.split('.')[0]], effects: [
-      { type: 'stat' as const, key: item.key, stage: 'baseFlat' as const, value: item.id === 'movement.speed' ? 0 : item.value },
-      ...(item.id === 'pick.radius' ? [{ type: 'stat' as const, key: 'weapon.pick.interactionRange', stage: 'baseFlat' as const, value: 0.1 }] : []),
-      ...(item.id === 'spear.radius' ? [{ type: 'stat' as const, key: 'weapon.spear.interactionRange', stage: 'baseFlat' as const, value: 0.15 }] : []),
-    ] })),
+  ...upgradeItems.map(item => {
+    const costMultiplier = item.id === 'fists.speed' || item.id === 'needle.speed' ? 1.7 : ['movement.speed', 'penetration'].includes(item.id) ? 1.55 : 1.8;
+    const priceHandler = item.id === 'fists.radius'
+      ? ({ level }: { level: number }) => ({ ore: [0, 150, 1000, 5000, 25000, 100000, 500000][level] ?? 0 })
+      : item.id === 'fists.speed'
+        ? ({ level }: { level: number }) => ({ ore: level === 0 ? 15 : level === 1 ? 50 : Math.ceil(item.cost * costMultiplier ** level) })
+        : item.id.startsWith('pick.')
+          ? ({ level }: { level: number }) => ({ ore: Math.ceil(item.cost * costMultiplier ** level * (level === 0 ? 0.5 : level === 1 ? 0.7 : 1)) })
+          : undefined;
+    return new RepeatableUpgrade({ id: item.id, name: item.name, description: item.description,
+      maxLevel: 'maxLevel' in item && typeof item.maxLevel === 'number' ? item.maxLevel : 1000, baseCost: { ore: item.cost }, priceHandler,
+      outputHandler: item.id === 'movement.speed' ? ({ current, level }) => current + 0.75 * level
+        : item.id === 'penetration' ? ({ level }) => level <= 0 ? 0 : Math.min(0.85, 0.25 + (level - 1) * 0.15) : undefined,
+      costMultiplier, requiresUpgrades: {}, requiresResources: {},
+      tags: ['repeatable', item.id.split('.')[0]], effects: [
+        { type: 'stat' as const, key: item.key, stage: 'baseFlat' as const, value: item.id === 'movement.speed' ? 0 : item.value },
+        ...(item.id === 'pick.radius' ? [{ type: 'stat' as const, key: 'weapon.pick.interactionRange', stage: 'baseFlat' as const, value: 0.1 }] : []),
+        ...(item.id === 'spear.radius' ? [{ type: 'stat' as const, key: 'weapon.spear.interactionRange', stage: 'baseFlat' as const, value: 0.15 }] : []),
+      ] });
+  }),
   ...masteryItems.map(item => new OneTimeUpgrade({ id: item.id, name: item.name, description: item.description,
     baseCost: { ore: item.cost }, costMultiplier: 1, requiresUpgrades: { 'pick.damage': item.requiredDamageLevel }, requiresResources: {}, tags: ['weapon', 'pick', 'mastery'],
     effects: [{ type: 'stat' as const, key: 'weapon.pick.damage', stage: 'outputMult' as const, value: item.multiplier }] })),
