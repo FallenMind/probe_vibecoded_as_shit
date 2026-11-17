@@ -82,6 +82,11 @@ export class CanvasGameRenderer {
   draw(state: DeepReadonly<GameState>): void {
     const map = Object.values(state.maps)[0];
     if (!map) return;
+    const run = state.moduleData.run as { clicks?: number } | undefined;
+    const cycle15Suppressed = Object.values(state.upgradeSuppressions ?? {}).some(rule => rule.all || rule.upgradeIds.includes('cycle.15') || rule.tags.includes('cycle'));
+    const cycle15Active = (state.upgradeLevels['cycle.15'] ?? 0) > 0 && state.upgradeEnabled['cycle.15'] !== false && !cycle15Suppressed;
+    const clickCapacity = this.visuals.config.input.clickBufferCapacity * (cycle15Active ? 1.1 : 1);
+    const clickBufferFill = Math.min(1, Math.max(0, (run?.clicks ?? 0) / clickCapacity));
     const ctx = this.ctx, width = this.canvas.width, height = this.canvas.height;
     const tile = Math.min((width - 70) / map.width, (height - 110) / (map.height + 1));
     const ox = (width - tile * map.width) / 2, oy = (height - tile * map.height) / 2;
@@ -192,10 +197,29 @@ export class CanvasGameRenderer {
       const weaponPose = attack?.player.pose();
       // Силуэт из прежней сцены: тяжёлые ноги, корпус, руки и визор.
       const unit = Math.max(3, tile * 0.18);
+      if (clickBufferFill > 0.05) {
+        ctx.save();
+        const aura = ctx.createRadialGradient(x, y, unit, x, y, unit * 4.4);
+        aura.addColorStop(0, `rgba(255,177,99,${0.025 + clickBufferFill * 0.075})`);
+        aura.addColorStop(0.55, `rgba(255,194,117,${clickBufferFill * 0.045})`);
+        aura.addColorStop(1, 'rgba(255,194,117,0)');
+        ctx.fillStyle = aura; ctx.beginPath(); ctx.arc(x, y, unit * 4.4, 0, Math.PI * 2); ctx.fill();
+        ctx.translate(x, y); ctx.rotate(angle);
+        const phase = this.visuals.elapsed * (1.5 + clickBufferFill * 2);
+        for (let streak = 0; streak < 3; streak++) {
+          const travel = (phase + streak / 3) % 1;
+          const offset = (streak - 1) * unit * 1.65;
+          const tail = unit * (2.1 + travel * 1.2);
+          ctx.strokeStyle = `rgba(255,205,145,${(1 - travel) * clickBufferFill * 0.24})`;
+          ctx.lineWidth = Math.max(1, unit * 0.12);
+          ctx.beginPath(); ctx.moveTo(-tail, offset); ctx.lineTo(-tail - unit * 0.65, offset); ctx.stroke();
+        }
+        ctx.restore();
+      }
       ctx.fillStyle = 'rgba(7,18,26,.55)'; ctx.beginPath(); ctx.ellipse(x, y + unit * 2, unit * 2.75, unit, 0, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = '#243943'; ctx.fillRect(x - unit * 1.7, y + unit * 0.6, unit * 1.2, unit * 2.4); ctx.fillRect(x + unit * 0.5, y + unit * 0.6, unit * 1.2, unit * 2.4);
-      ctx.fillStyle = '#91a8a5'; ctx.beginPath(); ctx.roundRect(x - unit * 2, y - unit * 1.6, unit * 4, unit * 3.4, unit * 0.5); ctx.fill();
-      ctx.fillStyle = '#536c73'; ctx.fillRect(x - unit * 3, y - unit, unit, unit * 2.5); ctx.fillRect(x + unit * 2, y - unit, unit, unit * 2.5);
+      ctx.fillStyle = `rgb(${145 + Math.round(clickBufferFill * 22)},${168 + Math.round(clickBufferFill * 2)},${165 - Math.round(clickBufferFill * 22)})`; ctx.beginPath(); ctx.roundRect(x - unit * 2, y - unit * 1.6, unit * 4, unit * 3.4, unit * 0.5); ctx.fill();
+      ctx.fillStyle = `rgb(${83 + Math.round(clickBufferFill * 30)},${108 + Math.round(clickBufferFill * 2)},${115 - Math.round(clickBufferFill * 24)})`; ctx.fillRect(x - unit * 3, y - unit, unit, unit * 2.5); ctx.fillRect(x + unit * 2, y - unit, unit, unit * 2.5);
       ctx.fillStyle = '#e8c18a'; ctx.beginPath(); ctx.arc(x, y - unit * 1.6, unit * 1.1, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = '#253c44'; ctx.fillRect(x - unit * 0.8, y - unit * 1.9, unit * 1.6, unit * 0.55);
       ctx.fillStyle = '#e9bd76'; ctx.fillRect(x - unit * 0.7, y + unit * 0.1, unit * 1.4, unit * 0.35);

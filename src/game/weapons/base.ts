@@ -34,6 +34,7 @@ export abstract class BaseWeapon implements Weapon {
     if (!this.config.enabled || !runtime.enabled || !context.character.enabled || context.seconds <= 0) return result;
     let target = this.selectTarget(context);
     if (!target) return result;
+    if (![context.character.position.x, context.character.position.y, target.position.x, target.position.y].every(Number.isFinite)) return result;
     const distance = Math.hypot(target.position.x - context.character.position.x, target.position.y - context.character.position.y);
     // Движение останавливается ровно на границе радиуса; округление координат
     // не должно заставлять оружие бесконечно ожидать ещё один шаг.
@@ -96,13 +97,16 @@ export abstract class BaseWeapon implements Weapon {
   protected createPlan(context: WeaponContext, target: DeepReadonly<TileState>, combo: boolean, attackSpeedMultiplier = 1): AttackPlan {
     const c = this.config;
     const damage = (context.resolveStat?.(c.damage, ['weapon.damage', `weapon.${c.damageCategory}.damage`, `weapon.${this.id}.damage`]) ?? c.damage) * (combo ? c.combo.damageMultiplier : 1);
-    const areaRadius = context.resolveStat?.(c.area.radius, ['weapon.splash.radius', `weapon.${c.damageCategory}.splash.radius`, `weapon.${this.id}.splash.radius`]) ?? c.area.radius;
-    const fistComboRadius = combo && this.id === 'fists'
+    const resolvedRadius = context.resolveStat?.(c.area.radius, ['weapon.splash.radius', `weapon.${c.damageCategory}.splash.radius`, `weapon.${this.id}.splash.radius`]) ?? c.area.radius;
+    const areaRadius = Number.isFinite(resolvedRadius) ? Math.max(0, resolvedRadius) : 0;
+    const rawFistComboRadius = combo && this.id === 'fists'
       ? context.resolveStat?.(0, ['weapon.fists.combo.splash.radius']) ?? 0
       : 0;
+    const fistComboRadius = Number.isFinite(rawFistComboRadius) ? Math.max(0, rawFistComboRadius) : 0;
+    const extraRadius = Number.isFinite(c.combo.extraRadius) ? Math.max(0, c.combo.extraRadius) : 0;
     const radius = combo && this.id === 'fists'
-      ? c.combo.extraRadius + fistComboRadius
-      : areaRadius + (combo ? c.combo.extraRadius : 0);
+      ? extraRadius + fistComboRadius
+      : areaRadius + (combo ? extraRadius : 0);
     const penetration = context.resolveStat?.(c.armorPenetration, ['weapon.armorPenetration', `weapon.${this.id}.armorPenetration`]) ?? c.armorPenetration;
     const elementalPenetration = context.resolveStat?.(c.elementalPenetration, [`weapon.${this.id}.elementalPenetration`]) ?? c.elementalPenetration;
     const shape = this.splashShape(combo);

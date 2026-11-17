@@ -60,7 +60,13 @@ export function createScreenRenderer(game: FrameworkGame): (selected: AlchemyNod
     byId('paused').classList.toggle('hidden', !s.paused);
     byId('pause').textContent = s.paused ? '▶' : 'Ⅱ';
     byId('debug-grant').toggleAttribute('disabled', s.paused);
-    byId('mine').classList.toggle('buffering', run.clicks > 0.05);
+    const cycle15 = game.bus.query('upgrades', { type: 'status', payload: 'cycle.15' }) as { active?: boolean } | undefined;
+    const clickBufferCapacity = game.config.input.clickBufferCapacity * (cycle15?.active ? 1.1 : 1);
+    const clickBufferFill = Math.min(1, Math.max(0, run.clicks / clickBufferCapacity));
+    const mineButton = byId('mine');
+    mineButton.style.setProperty('--buffer-fill', `${(clickBufferFill * 100).toFixed(1)}%`);
+    mineButton.classList.toggle('buffering', clickBufferFill > 0.01);
+    mineButton.classList.toggle('buffer-high', clickBufferFill >= 0.5);
     const palette = stonePaletteForLayer(map.layer, game.config);
     for (const kind of ['stone', 'hard', 'elemental'] as const) {
       const swatch = document.querySelector<HTMLElement>(`[data-stone-kind="${kind}"]`);

@@ -228,6 +228,14 @@ function scaledValue(base: number, increment: number, fraction: number, steps: n
   return value;
 }
 function bossLayer(layer: number, config: FrameworkConfig): boolean { return (layer + 1) % config.world.bossEveryLayers === 0 && layer + 1 < config.world.layers; }
+function clickSpeedMultiplier(fill: number, input: FrameworkConfig['input']): number {
+  const safeFill = Number.isFinite(fill) ? Math.min(1, Math.max(0, fill)) : 0;
+  const midpoint = Number.isFinite(input.clickSpeedMidpoint) ? Math.min(0.99, Math.max(0.01, input.clickSpeedMidpoint)) : 0.5;
+  const middle = Number.isFinite(input.clickSpeedMultiplierMidpoint) ? input.clickSpeedMultiplierMidpoint : 1.3;
+  const full = Number.isFinite(input.clickSpeedMultiplierFull) ? input.clickSpeedMultiplierFull : 1.5;
+  if (safeFill <= midpoint) return 1 + (middle - 1) * safeFill / midpoint;
+  return middle + (full - middle) * (safeFill - midpoint) / (1 - midpoint);
+}
 function playableLayerCount(state: { readonly upgradeLevels: Readonly<Record<string, number>> }, config: FrameworkConfig): number {
   return (state.upgradeLevels['infinity.breakthrough'] ?? 0) >= 2 ? config.world.extendedLayers : config.world.layers;
 }
@@ -258,6 +266,7 @@ class NativeGameplay implements GameModule {
   onRegister(bus: StateAccess): void { bus.update(s => {
     s.moduleData.run ??= freshRun();
     const run = s.moduleData.run as NativeRun;
+    run.clicks = Number.isFinite(run.clicks) ? Math.max(0, run.clicks) : 0;
     run.elementalization ??= false; run.crystalFlow ??= false; run.overloadRemaining ??= 0; run.overloadUsed ??= false; run.overloadCount ??= 0;
     run.endChargeRemaining ??= 0; run.endChargeDuration ??= 0; run.boundaryChargeTargetLayer ??= null;
     run.boundaryReturnRemaining ??= 0; run.stimpackRemaining ??= 0;
@@ -289,6 +298,16 @@ class NativeGameplay implements GameModule {
       Math.floor(run.layer / this.config.world.hpGrowthEveryLayers))
       * this.config.world.foldingHealthMultiplier ** folding * this.config.world.boundaryGateHealthMultiplier * shatter;
     bus.update(s => {
+      // Older saves or interrupted writes can contain a non-finite buffer value.
+      // Letting NaN reach movement speed poisons the actor position and breaks
+      // both attack-area validation and canvas rendering.
+      run.clicks = Number.isFinite(run.clicks) ? Math.max(0, run.clicks) : 0;
+      for (const actor of Object.values(s.characters)) {
+        if (!Number.isFinite(actor.position.x) || !Number.isFinite(actor.position.y)) {
+          actor.position = { x: Math.min(map.width - 1, Math.max(0, this.config.characters.spawnX)),
+            y: Math.min(map.height - 1, Math.max(0, this.config.characters.spawnY)) };
+        }
+      }
       const currentMap = s.maps[map.id];
       if (currentMap && !currentMap.tags.includes('boundary-exit')) currentMap.tags.push('boundary-exit');
       const tile = s.tiles[id];
@@ -305,7 +324,7 @@ class NativeGameplay implements GameModule {
   }
   command(bus: StateAccess, command: GameCommand): boolean {
     const run = getRun(bus.read());
-    if (command.type === 'click') { const capacity = this.config.input.clickBufferCapacity * (isCycleActive(bus.read(), 'cycle.15') ? 1.1 : 1); bus.update(() => { run.clicks = Math.min(capacity, run.clicks + this.config.input.clickGainPerPress); }); return true; }
+    if (command.type === 'click') { const capacity = this.config.input.clickBufferCapacity * (isCycleActive(bus.read(), 'cycle.15') ? 1.1 : 1); bus.update(() => { const current = Number.isFinite(run.clicks) ? Math.max(0, run.clicks) : 0; run.clicks = Math.min(capacity, current + this.config.input.clickGainPerPress); }); return true; }
     if (command.type === 'unlock-water' && !bus.read().paused && run.furthest >= 20 && !run.unlocked.water && bus.exchange(this.config.alchemy.unlockCosts.water, {})) {
       run.unlocked.water = true;
       return true;
@@ -353,13 +372,15 @@ class NativeGameplay implements GameModule {
       }
       run.clicks = Math.max(0, run.clicks - (this.config.input.clickFlatDecayPerSecond + run.clicks * this.config.input.clickFractionDecayPerSecond) * seconds);
       const capacity = this.config.input.clickBufferCapacity * (isCycleActive(s, 'cycle.15') ? 1.1 : 1);
-      const fraction = run.clicks / capacity;
+      const fraction = Number.isFinite(capacity) && capacity > 0 ? Math.min(1, Math.max(0, run.clicks / capacity)) : 0;
+      const clickSpeed = clickSpeedMultiplier(fraction, this.config.input);
       run.stimpackRemaining = Math.max(0, run.stimpackRemaining - seconds);
       run.boundaryReturnRemaining = Math.max(0, run.boundaryReturnRemaining - seconds);
       const movement = bus.query('upgrades', { type: 'stat', payload: { base: this.config.characters.baseMovementSpeed, keys: ['character.moveSpeed'] } });
       for (const actor of Object.values(s.characters)) {
-        actor.attackSpeed = this.config.characters.baseAttackSpeed * (1 + fraction * this.config.input.miningSpeedBonus) * (isCycleActive(s, 'cycle.12') ? 1.1 : 1) * (run.challenge === 4 && run.stimpackRemaining > 0 ? 1.5 : 1);
-        actor.movementSpeed = (typeof movement === 'number' ? movement : this.config.characters.baseMovementSpeed) * (1 + fraction * this.config.input.movementSpeedBonus);
+        actor.attackSpeed = this.config.characters.baseAttackSpeed * clickSpeed * (isCycleActive(s, 'cycle.12') ? 1.1 : 1) * (run.challenge === 4 && run.stimpackRemaining > 0 ? 1.5 : 1);
+        const baseMovement = typeof movement === 'number' && Number.isFinite(movement) ? movement : this.config.characters.baseMovementSpeed;
+        actor.movementSpeed = baseMovement * clickSpeed;
       }
       if (run.elementalization && s.resources.air.amount > 0) s.resources.air.amount = Math.max(0, s.resources.air.amount - this.config.alchemy.buffs.airPerSecond * seconds);
       if (run.overloadRemaining > 0) run.overloadRemaining = Math.max(0, run.overloadRemaining - seconds);
@@ -794,11 +815,31 @@ export class FrameworkGame {
   private readonly shop: ReturnType<typeof upgrades>;
   constructor(initial?: GameState) {
     const config = structuredClone(DEFAULT_CONFIG);
+    const restored = initial ? structuredClone(initial) : undefined;
+    if (restored) {
+      const run = restored.moduleData.run as Partial<NativeRun> | undefined;
+      if (run && !Number.isFinite(run.clicks)) run.clicks = 0;
+      const map = Object.values(restored.maps)[0];
+      for (const actor of Object.values(restored.characters)) {
+        if (!Number.isFinite(actor.position?.x) || !Number.isFinite(actor.position?.y)) {
+          actor.position = { x: Math.min(map?.width ? map.width - 1 : config.world.width - 1, Math.max(0, config.characters.spawnX)),
+            y: Math.min(map?.height ? map.height - 1 : config.world.height - 1, Math.max(0, config.characters.spawnY)) };
+        }
+        if (!Number.isFinite(actor.attackSpeed) || actor.attackSpeed <= 0) actor.attackSpeed = config.characters.baseAttackSpeed;
+        if (!Number.isFinite(actor.movementSpeed) || actor.movementSpeed < 0) actor.movementSpeed = config.characters.baseMovementSpeed;
+      }
+      for (const tile of Object.values(restored.tiles)) {
+        if (!Number.isFinite(tile.position?.x) || !Number.isFinite(tile.position?.y)) {
+          const [x, y] = tile.id.split(':').slice(-2).map(Number);
+          tile.position = { x: Number.isFinite(x) ? x : 0, y: Number.isFinite(y) ? y : 0 };
+        }
+      }
+    }
     for (const weapon of Object.values(config.weapons)) weapon.combo.enabled = true;
     config.weapons.fists.area.edgeDamageMultiplier = 0.35;
     if ((initial?.upgradeLevels['fists.splash'] ?? 0) > 0) config.weapons.fists.area.shape = 'circle';
     for (const recipe of Object.values(config.alchemy.recipes)) recipe.enabled = !!recipe.passive;
-    const assembled = createDraftFramework(config, initial);
+    const assembled = createDraftFramework(config, restored);
     this.bus = assembled.bus; this.config = assembled.config;
     this.shop = upgrades(this.config);
     this.bus.replace(new UpgradeModule(this.shop));

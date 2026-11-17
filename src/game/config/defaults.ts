@@ -58,7 +58,7 @@ export const DEFAULT_CONFIG: FrameworkConfig = {
       overloadSeconds: 1800, overloadUpgradeCost: { water: 200, ore: 50000 }, fireReactionUnlockCosts: { vulcanization: { water: 200, ore: 50000 }, decomposition: { water: 200, ore: 50000 } },
       crystalFlowWaterPerSecond: 80, crystalFlowCrystalsPerSecond: 1 } },
   progression: { breakthroughPerCompletion: 1, resetOre: true, resetAlchemy: true, retainCrystals: true, retainUpgrades: true },
-  input: { clickBufferCapacity: 30, clickGainPerPress: 10, clickFlatDecayPerSecond: 3, clickFractionDecayPerSecond: 0.2, miningSpeedBonus: 0.3, movementSpeedBonus: 0.4, emitterSpeedMaxBonus: 0.75 },
+  input: { clickBufferCapacity: 100, clickGainPerPress: 10, clickFlatDecayPerSecond: 3, clickFractionDecayPerSecond: 0.4, clickSpeedMidpoint: 0.5, clickSpeedMultiplierMidpoint: 1.3, clickSpeedMultiplierFull: 1.5, emitterSpeedMaxBonus: 0.75 },
   artifacts: { enabled: true, adjacentMaps: 1, neighborhoodRadius: 2, isolationMultiplier: 4, tickSeconds: 1 },
   challenges: {
     one: { enabled: true, width: 50, height: 50, timeLimitSeconds: 60, stoneHealthMultiplier: 4, regenerationFractionPerSecond: 0, allowSplash: true, allowArtifacts: true },

@@ -23,6 +23,4 @@
 #saved { white-space: nowrap; }
 .debug-button { padding: 7px 9px; border: 1px dashed #d09a56; border-radius: 6px; background: #29251f; color: #edc27e; font-size: 9px; font-weight: 800; letter-spacing: .05em; }
 .debug-button:disabled { opacity: .45; }
-.mine-button { transition: filter 120ms ease, box-shadow 120ms ease; }
-.mine-button.buffering { filter: brightness(1.25); box-shadow: 0 0 16px #86d8ff66; }
 @media (max-width: 520px) { .top-actions #saved { display: none; } .weapon-select .equipment-button { min-width: 90px; } }

@@ -169,7 +169,15 @@ window.addEventListener('pagehide', () => { if (!resetting) game.save(); });
 function frame(now: number): void {
   const dt = Math.min(0.25, Math.max(0, (now - last) / 1000)); last = now;
   lastWall = Date.now();
-  game.advance(dt);
+  try { game.advance(dt); }
+  catch (error) {
+    // An invalid legacy state must not kill requestAnimationFrame permanently.
+    // Pause simulation and keep the UI alive so the problem can be recovered from.
+    game.bus.setPaused(true);
+    const run = game.bus.read().moduleData.run as { message?: string } | undefined;
+    if (run) run.message = `Симуляция приостановлена из-за ошибки данных: ${error instanceof Error ? error.message : String(error)}`;
+    console.error('Gameplay tick failed; simulation paused.', error);
+  }
   visuals.tick(dt);
   if (now - rendered > 100) { render(); rendered = now; }
   if (activeTab === 'breach') canvasRenderer.draw(game.bus.read());
