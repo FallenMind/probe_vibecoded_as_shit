@@ -23,7 +23,7 @@ export const DEFAULT_CONFIG: FrameworkConfig = {
     hardMineralSeed: 42, elementalMineralSeed: 117, hardMineralThreshold: 0.32, bossHardThreshold: 0.02,
     elementalMineralThreshold: 0.32, elementalRampStartThreshold: 0.62, elementalBossThreshold: -0.72,
     hardMineralFirstLayer: 2, elementalMineralFirstLayer: 19, elementalMineralFullLayer: 29,
-    bossEveryLayers: 5, bossHealthMultiplier: 3, bossTimeSeconds: 60, boundaryEnabled: true, boundarySpeed: 1,
+    bossEveryLayers: 5, firstBossHealthMultiplier: 2, bossHealthMultiplier: 3, bossTimeSeconds: 60, boundaryEnabled: true, boundarySpeed: 1,
     outsideBoundaryLayer: 50, outsideBoundarySeconds: 10, extendedLayers: 100, boundaryGateHealthMultiplier: 4, foldingHealthMultiplier: 1.5,
     compressorEnabled: true, compressorRemainingFraction: 0.05, compressorUnlockLayer: 40, compressorCost: 150000, finalChargeSeconds: 5, stoneShatterFactor: 0.5 },
   characters: { maxCount: 8, baseMovementSpeed: 2.5, baseAttackSpeed: 1, spawnX: 12, spawnY: 25 },

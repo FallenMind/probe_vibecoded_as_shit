@@ -584,7 +584,7 @@ class NativeGameplay implements GameModule {
       const actualBase = actualKind === 'hard' ? c.hardHealth : actualKind === 'elemental' ? c.elementalHealth : c.stoneHealth;
       let hp = scaledValue(actualBase, c.hpGrowthLinear, c.hpGrowthFraction, growthSteps);
       if (afterBoss) hp *= c.postBossHealthMultiplier;
-      if (boss && !bossSealLifted) hp *= c.bossHealthMultiplier;
+      if (boss && !bossSealLifted) hp *= (run.layer + 1 === c.bossEveryLayers ? c.firstBossHealthMultiplier : c.bossHealthMultiplier);
       hp *= challenge ? this.challengeHealthMultiplier(challenge, run.layer) : foldingFactor;
       hp *= shatterFactor;
       const tileId = `${id}:${x}:${y}`;

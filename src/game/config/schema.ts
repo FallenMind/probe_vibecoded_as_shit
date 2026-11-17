@@ -36,7 +36,7 @@ export interface FrameworkConfig {
     hardMineralSeed: number; elementalMineralSeed: number; hardMineralThreshold: number; bossHardThreshold: number;
     elementalMineralThreshold: number; elementalRampStartThreshold: number; elementalBossThreshold: number;
     hardMineralFirstLayer: number; elementalMineralFirstLayer: number; elementalMineralFullLayer: number;
-    bossEveryLayers: number; bossHealthMultiplier: number; bossTimeSeconds: number;
+    bossEveryLayers: number; firstBossHealthMultiplier: number; bossHealthMultiplier: number; bossTimeSeconds: number;
     boundaryEnabled: boolean; boundarySpeed: number; outsideBoundaryLayer: number; outsideBoundarySeconds: number; extendedLayers: number; boundaryGateHealthMultiplier: number; foldingHealthMultiplier: number; compressorEnabled: boolean; compressorRemainingFraction: number; compressorUnlockLayer: number; compressorCost: number; finalChargeSeconds: number; stoneShatterFactor: number;
   };
   characters: { maxCount: number; baseMovementSpeed: number; baseAttackSpeed: number; spawnX: number; spawnY: number };
